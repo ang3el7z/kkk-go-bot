@@ -129,15 +129,28 @@ func (m *Manager) Link(ctx context.Context, id string) (string, error) {
 		return "", err
 	}
 	uuid, _ := payload["id"].(string)
-	host := m.cfg.Domain
-	if host == "" {
-		host = m.cfg.PublicIP
+	return fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&type=ws&path=/ws#%s", uuid, m.host(), client.Name), nil
+}
+
+func (m *Manager) Subscription(ctx context.Context, uuid, typ string) (string, string, error) {
+	client, err := m.clientByUUID(ctx, uuid)
+	if err != nil {
+		return "", "", err
 	}
-	if host == "" {
-		host = "example.com"
+	link, err := m.Link(ctx, client.ID)
+	if err != nil {
+		return "", "", err
 	}
-	path := "/ws"
-	return fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&type=ws&path=%s#%s", uuid, host, path, client.Name), nil
+	switch typ {
+	case "si":
+		body := fmt.Sprintf(`{"outbounds":[{"type":"vless","tag":"%s","server":"%s","server_port":443,"uuid":"%s","tls":{"enabled":true},"transport":{"type":"ws","path":"/ws"}}]}`+"\n", client.Name, m.host(), uuid)
+		return "application/json", body, nil
+	case "cl":
+		body := fmt.Sprintf("proxies:\n  - name: %s\n    type: vless\n    server: %s\n    port: 443\n    uuid: %s\n    tls: true\n    network: ws\n    ws-opts:\n      path: /ws\n", client.Name, m.host(), uuid)
+		return "text/yaml", body, nil
+	default:
+		return "text/plain", link + "\n", nil
+	}
 }
 
 func (m *Manager) QR(ctx context.Context, id string) (string, []byte, error) {
@@ -198,6 +211,34 @@ func (m *Manager) client(ctx context.Context, id string) (storage.Client, error)
 		}
 	}
 	return storage.Client{}, errors.New("Xray user not found")
+}
+
+func (m *Manager) clientByUUID(ctx context.Context, uuid string) (storage.Client, error) {
+	clients, err := m.repo.ListClients(ctx, "xray")
+	if err != nil {
+		return storage.Client{}, err
+	}
+	for _, client := range clients {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(client.ConfigJSON), &payload); err != nil {
+			continue
+		}
+		if payload["id"] == uuid {
+			return client, nil
+		}
+	}
+	return storage.Client{}, errors.New("Xray user not found")
+}
+
+func (m *Manager) host() string {
+	host := m.cfg.Domain
+	if host == "" {
+		host = m.cfg.PublicIP
+	}
+	if host == "" {
+		host = "example.com"
+	}
+	return host
 }
 
 func (m *Manager) template() (map[string]any, error) {

@@ -48,6 +48,13 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	if link == "" {
 		t.Fatal("empty link")
 	}
+	contentType, body, err := manager.Subscription(ctx, client.ID[len("xray:"):], "si")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "application/json" || body == "" {
+		t.Fatalf("bad subscription: %s %q", contentType, body)
+	}
 	_, png, err := manager.QR(ctx, client.ID)
 	if err != nil {
 		t.Fatal(err)

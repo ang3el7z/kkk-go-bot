@@ -54,7 +54,8 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 		return err
 	}
 
-	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xray.NewManager(cfg, repo))
+	xrayManager := xray.NewManager(cfg, repo)
+	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xrayManager)
 	client := telegram.NewAPIClient(cfg.TelegramToken)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +77,19 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("/pac", func(w http.ResponseWriter, r *http.Request) {
+		uuid := r.URL.Query().Get("s")
+		if uuid == "" {
+			uuid = r.URL.Query().Get("id")
+		}
+		contentType, body, err := xrayManager.Subscription(r.Context(), uuid, r.URL.Query().Get("t"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		w.Header().Set("Content-Type", contentType)
+		_, _ = w.Write([]byte(body))
 	})
 
 	server := &http.Server{
