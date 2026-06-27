@@ -25,6 +25,9 @@ func TestAddToggleDeletePeer(t *testing.T) {
 		WGPort:    "51820",
 		PublicIP:  "203.0.113.1",
 	}, repo)
+	if err := manager.SetDefaultAllowedIPs(ctx, "wg", "10.0.0.0/8"); err != nil {
+		t.Fatal(err)
+	}
 	client, conf, err := manager.Add(ctx, "wg", "test", "0.0.0.0/0")
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +61,7 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.Amnezia || len(info.Clients) != 1 || info.Clients[0].Address == "" {
+	if !info.Amnezia || info.DefaultAllowedIPs != "10.0.0.0/8" || len(info.Clients) != 1 || info.Clients[0].Address == "" {
 		t.Fatalf("bad info: %+v", info)
 	}
 	_, png, err := manager.ClientQR(ctx, client.ID)

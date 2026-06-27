@@ -79,7 +79,7 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 			return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
 		}
 		if query.Data == "/add" {
-			_, _, err := b.wg.Add(ctx, "wg", "all", "0.0.0.0/0")
+			_, _, err := b.wg.Add(ctx, "wg", "all", "")
 			if err != nil {
 				return CallbackResult{}, err
 			}
@@ -114,7 +114,7 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, dat
 	value := parts[2]
 	switch action {
 	case "add":
-		client, _, err := b.wg.Add(ctx, value, "all", "0.0.0.0/0")
+		client, _, err := b.wg.Add(ctx, value, "all", "")
 		if err != nil {
 			return CallbackResult{}, true, err
 		}
@@ -152,6 +152,11 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, dat
 		}
 		msg.Text = fmt.Sprintf("Amnezia: %t\n\n%s", enabled, msg.Text)
 		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, nil
+	case "defaultallowedips":
+		if err := b.setPending(ctx, telegramID, action, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send default AllowedIPs for new peers, e.g. 0.0.0.0/0", ShowAlert: true}, true, nil
 	case "rename", "timer", "dns", "mtu", "allowedips":
 		if err := b.setPending(ctx, telegramID, action, value); err != nil {
 			return CallbackResult{}, true, err
@@ -187,6 +192,8 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 		err = b.wg.SetMTU(ctx, payload.ClientID, msg.Text)
 	case "wg_allowedips":
 		err = b.wg.SetAllowedIPs(ctx, payload.ClientID, msg.Text)
+	case "wg_defaultallowedips":
+		err = b.wg.SetDefaultAllowedIPs(ctx, payload.ClientID, msg.Text)
 	case "xray_add":
 		_, err = b.xray.Add(ctx, msg.Text)
 		if err == nil {
@@ -355,8 +362,9 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{{
 		{Text: "Add peer", Data: "wg:add:" + instance},
 		{Text: fmt.Sprintf("Amnezia: %t", info.Amnezia), Data: "wg:amnezia:" + instance},
+		{Text: "Default AllowedIPs", Data: "wg:defaultallowedips:" + instance},
 	}}}
-	var lines []string
+	lines := []string{"default allow=" + info.DefaultAllowedIPs}
 	for _, client := range info.Clients {
 		status := "off"
 		if client.Enabled {

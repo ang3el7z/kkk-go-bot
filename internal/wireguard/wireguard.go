@@ -28,9 +28,10 @@ type Config struct {
 }
 
 type Info struct {
-	Instance string
-	Amnezia  bool
-	Clients  []ClientInfo
+	Instance          string
+	Amnezia           bool
+	DefaultAllowedIPs string
+	Clients           []ClientInfo
 }
 
 type ClientInfo struct {
@@ -66,7 +67,11 @@ func (m *Manager) Info(ctx context.Context, instance string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
-	info := Info{Instance: instance, Amnezia: amnezia}
+	defaultAllowedIPs, err := m.DefaultAllowedIPs(ctx, instance)
+	if err != nil {
+		return Info{}, err
+	}
+	info := Info{Instance: instance, Amnezia: amnezia, DefaultAllowedIPs: defaultAllowedIPs}
 	for _, client := range clients {
 		cfg, err := decodeConfig(client.ConfigJSON)
 		if err != nil {
@@ -98,7 +103,13 @@ func (m *Manager) Add(ctx context.Context, instance, name, allowedIPs string) (s
 		name = fmt.Sprintf("all%d", time.Now().Unix())
 	}
 	if allowedIPs == "" {
-		allowedIPs = "0.0.0.0/0"
+		allowedIPs, err = m.DefaultAllowedIPs(ctx, instance)
+		if err != nil {
+			return storage.Client{}, "", err
+		}
+		if allowedIPs == "" {
+			allowedIPs = "0.0.0.0/0"
+		}
 	}
 	clientIP, err := nextClientIP(server)
 	if err != nil {
@@ -357,6 +368,33 @@ func (m *Manager) SetAllowedIPs(ctx context.Context, id, allowedIPs string) erro
 	}
 	cfg.Peers[0]["AllowedIPs"] = strings.TrimSpace(allowedIPs)
 	return m.saveClientConfigAndRebuild(ctx, instance, client, cfg)
+}
+
+func (m *Manager) DefaultAllowedIPs(ctx context.Context, instance string) (string, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, defaultAllowedIPsSettingKey(instance))
+	if err != nil || !ok {
+		return "0.0.0.0/0", err
+	}
+	var value string
+	if err := json.Unmarshal([]byte(setting.ValueJSON), &value); err != nil {
+		return "0.0.0.0/0", nil
+	}
+	if strings.TrimSpace(value) == "" {
+		return "0.0.0.0/0", nil
+	}
+	return value, nil
+}
+
+func (m *Manager) SetDefaultAllowedIPs(ctx context.Context, instance, allowedIPs string) error {
+	allowedIPs = strings.TrimSpace(allowedIPs)
+	if allowedIPs == "" || allowedIPs == "0" {
+		allowedIPs = "0.0.0.0/0"
+	}
+	body, err := json.Marshal(allowedIPs)
+	if err != nil {
+		return err
+	}
+	return m.repo.SetSetting(ctx, storage.Setting{Key: defaultAllowedIPsSettingKey(instance), ValueJSON: string(body)})
 }
 
 func (m *Manager) ToggleAmnezia(ctx context.Context, instance string) (bool, error) {
@@ -752,6 +790,10 @@ func clearAmneziaKeys(values map[string]string) {
 
 func amneziaSettingKey(instance string) string {
 	return "wireguard." + instance + ".amnezia"
+}
+
+func defaultAllowedIPsSettingKey(instance string) string {
+	return "wireguard." + instance + ".default_allowed_ips"
 }
 
 func publicKey(private string) (string, error) {
