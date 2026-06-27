@@ -8,6 +8,7 @@ import (
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
 	"github.com/ang3el7z/kkk-go-bot/internal/wireguard"
+	"github.com/ang3el7z/kkk-go-bot/internal/xray"
 )
 
 type repoStub struct {
@@ -78,7 +79,7 @@ func TestMenuOnlyUsesRepositoryServices(t *testing.T) {
 			{Name: "xr", DisplayName: "Xray"},
 		},
 	}
-	result, err := NewBot(repo, wireguard.NewManager(config.Config{}, repo)).HandleMessage(context.Background(), telegram.Message{
+	result, err := NewBot(repo, wireguard.NewManager(config.Config{}, repo), xray.NewManager(config.Config{}, repo)).HandleMessage(context.Background(), telegram.Message{
 		From: telegram.User{ID: 1},
 		Chat: telegram.Chat{ID: 10},
 		Text: "/menu",

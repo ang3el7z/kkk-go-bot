@@ -44,6 +44,9 @@ func (i *Importer) Import(ctx context.Context) error {
 	if err := i.importJSONSetting(ctx, "hwid", filepath.Join(i.cfg.ConfigDir, "hwid.json")); err != nil {
 		return err
 	}
+	if err := i.importXray(ctx, filepath.Join(i.cfg.ConfigDir, "xray.json")); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -96,6 +99,41 @@ func (i *Importer) importJSONSetting(ctx context.Context, key, path string) erro
 		return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + key + ".raw", ValueJSON: mustJSON(string(data))})
 	}
 	return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + key, ValueJSON: string(data)})
+}
+
+func (i *Importer) importXray(ctx context.Context, path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !json.Valid(data) {
+		return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy.xray.raw", ValueJSON: mustJSON(string(data))})
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return err
+	}
+	for _, client := range xrayClients(doc) {
+		id, _ := client["id"].(string)
+		email, _ := client["email"].(string)
+		if id == "" || email == "" {
+			continue
+		}
+		body, _ := json.Marshal(client)
+		if err := i.repo.SaveClient(ctx, storage.Client{
+			ID:         "xray:" + id,
+			Protocol:   "xray",
+			Name:       email,
+			Enabled:    client["off"] == nil,
+			ConfigJSON: string(body),
+		}); err != nil {
+			return err
+		}
+	}
+	return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy.xray", ValueJSON: string(data)})
 }
 
 func (i *Importer) importClients(ctx context.Context, protocol, path string) error {
@@ -151,6 +189,24 @@ func legacyClientItems(payload any) map[string]any {
 		}
 	}
 	return items
+}
+
+func xrayClients(doc map[string]any) []map[string]any {
+	inbounds, _ := doc["inbounds"].([]any)
+	if len(inbounds) == 0 {
+		return nil
+	}
+	inbound, _ := inbounds[0].(map[string]any)
+	settings, _ := inbound["settings"].(map[string]any)
+	rawClients, _ := settings["clients"].([]any)
+	clients := make([]map[string]any, 0, len(rawClients))
+	for _, raw := range rawClients {
+		client, ok := raw.(map[string]any)
+		if ok {
+			clients = append(clients, client)
+		}
+	}
+	return clients
 }
 
 func parseAdminIDs(text string) []int64 {

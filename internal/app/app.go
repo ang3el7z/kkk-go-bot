@@ -17,6 +17,7 @@ import (
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
 	"github.com/ang3el7z/kkk-go-bot/internal/usecase"
 	"github.com/ang3el7z/kkk-go-bot/internal/wireguard"
+	"github.com/ang3el7z/kkk-go-bot/internal/xray"
 )
 
 type Options struct {
@@ -53,7 +54,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 		return err
 	}
 
-	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo))
+	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xray.NewManager(cfg, repo))
 	client := telegram.NewAPIClient(cfg.TelegramToken)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {

@@ -10,15 +10,17 @@ import (
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
 	"github.com/ang3el7z/kkk-go-bot/internal/wireguard"
+	"github.com/ang3el7z/kkk-go-bot/internal/xray"
 )
 
 type Bot struct {
 	repo storage.Repository
 	wg   *wireguard.Manager
+	xray *xray.Manager
 }
 
-func NewBot(repo storage.Repository, wg *wireguard.Manager) *Bot {
-	return &Bot{repo: repo, wg: wg}
+func NewBot(repo storage.Repository, wg *wireguard.Manager, xr *xray.Manager) *Bot {
+	return &Bot{repo: repo, wg: wg, xray: xr}
 }
 
 type MessageResult struct {
@@ -49,6 +51,8 @@ func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageR
 		return b.menu(ctx)
 	case "/wg", "/wireguard":
 		return b.wgMenu(ctx, "wg")
+	case "/xray":
+		return b.xrayMenu(ctx)
 	default:
 		return MessageResult{Text: "Unknown command. Use /menu."}, nil
 	}
@@ -59,6 +63,9 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 		return CallbackResult{Text: "Unauthorized", ShowAlert: true}, nil
 	}
 	if result, ok, err := b.handleWireGuardCallback(ctx, query.From.ID, query.Data); ok || err != nil {
+		return result, err
+	}
+	if result, ok, err := b.handleXrayCallback(ctx, query.From.ID, query.Data); ok || err != nil {
 		return result, err
 	}
 	name, ok := strings.CutPrefix(query.Data, "service:")
@@ -169,6 +176,18 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 		err = b.wg.SetMTU(ctx, payload.ClientID, msg.Text)
 	case "wg_allowedips":
 		err = b.wg.SetAllowedIPs(ctx, payload.ClientID, msg.Text)
+	case "xray_add":
+		_, err = b.xray.Add(ctx, msg.Text)
+		if err == nil {
+			result, err := b.xrayMenu(ctx)
+			return result, true, err
+		}
+	case "xray_rename":
+		err = b.xray.Rename(ctx, payload.ClientID, msg.Text)
+		if err == nil {
+			result, err := b.xrayMenu(ctx)
+			return result, true, err
+		}
 	default:
 		return MessageResult{Text: "Unknown pending operation"}, true, nil
 	}
@@ -180,14 +199,62 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 	return result, true, err
 }
 
+func (b *Bot) handleXrayCallback(ctx context.Context, telegramID int64, data string) (CallbackResult, bool, error) {
+	if b.xray == nil || !strings.HasPrefix(data, "xray:") {
+		return CallbackResult{}, false, nil
+	}
+	parts := strings.SplitN(data, ":", 3)
+	if len(parts) < 2 {
+		return CallbackResult{Text: "Bad Xray action", ShowAlert: true}, true, nil
+	}
+	action := parts[1]
+	value := ""
+	if len(parts) == 3 {
+		value = parts[2]
+	}
+	switch action {
+	case "menu":
+		msg, err := b.xrayMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "add":
+		if err := b.setPendingOperation(ctx, telegramID, "xray_add", ""); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send Xray user name/email", ShowAlert: true}, true, nil
+	case "toggle":
+		if err := b.xray.Toggle(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.xrayMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "delete":
+		if err := b.xray.Delete(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.xrayMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "rename":
+		if err := b.setPendingOperation(ctx, telegramID, "xray_rename", value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send new Xray user name/email", ShowAlert: true}, true, nil
+	default:
+		return CallbackResult{Text: "Unknown Xray action", ShowAlert: true}, true, nil
+	}
+}
+
 func (b *Bot) setPending(ctx context.Context, telegramID int64, action, clientID string) error {
+	return b.setPendingOperation(ctx, telegramID, "wg_"+action, clientID)
+}
+
+func (b *Bot) setPendingOperation(ctx context.Context, telegramID int64, operation, clientID string) error {
 	payload, err := json.Marshal(map[string]string{"client_id": clientID})
 	if err != nil {
 		return err
 	}
 	return b.repo.SetPendingOperation(ctx, storage.PendingOperation{
 		TelegramID:  telegramID,
-		Operation:   "wg_" + action,
+		Operation:   operation,
 		PayloadJSON: string(payload),
 		ExpiresAt:   time.Now().UTC().Add(15 * time.Minute),
 	})
@@ -302,7 +369,35 @@ func callbackForService(name string) string {
 		return "/menu wg"
 	case "wg1":
 		return "/changeWG 1"
+	case "xr":
+		return "xray:menu"
 	default:
 		return "service:" + name
 	}
+}
+
+func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
+	clients, err := b.xray.List(ctx)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{{{Text: "Add user", Data: "xray:add"}}}}
+	lines := make([]string, 0, len(clients))
+	for _, client := range clients {
+		status := "off"
+		if client.Enabled {
+			status = "on"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s", status, client.Name))
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+			{Text: "toggle " + client.Name, Data: "xray:toggle:" + client.ID},
+			{Text: "rename", Data: "xray:rename:" + client.ID},
+			{Text: "delete", Data: "xray:delete:" + client.ID},
+		})
+	}
+	text := "Xray"
+	if len(lines) > 0 {
+		text += "\n\n" + strings.Join(lines, "\n")
+	}
+	return MessageResult{Text: text, Keyboard: keyboard}, nil
 }
