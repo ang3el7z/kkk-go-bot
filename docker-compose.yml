@@ -19,6 +19,45 @@ volumes:
     warp:
 
 services:
+    bot:
+        profiles:
+            - go-bot
+        image: ang3el7z/kkk-go-bot:dev
+        build:
+            context: .
+            dockerfile: dockerfile/go-bot.dockerfile
+        ports:
+            - 127.0.0.1:8082:8080
+        volumes:
+            - ./data:/data
+            - ./config:/config:ro
+            - ./app/config.php:/app/config.php:ro
+            - ./docker-compose.yml:/docker-compose.yml:ro
+            - /var/run/docker.sock:/var/run/docker.sock:ro
+        environment:
+            TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+            PUBLIC_IP: ${IP:-}
+            DATA_DIR: /data
+            DB_PATH: /data/bot.db
+            HTTP_ADDR: :8080
+            CONFIG_DIR: /config
+            LEGACY_PHP_CONFIG: /app/config.php
+            COMPOSE_PATH: /docker-compose.yml
+            PROJECT_NAME: kkk-go-bot
+            TZ: ${TZ:-UTC}
+        env_file:
+            - path: ./.env
+              required: true # default
+            - path: ./override.env
+              required: false
+        hostname: bot
+        container_name: bot-${VER}
+        stop_grace_period: 5s
+        networks:
+            default:
+                ipv4_address: 10.10.0.18
+        logging: *default-logging
+
     up:
         image: mercurykd/vpnbot-ng:1.1
         build:

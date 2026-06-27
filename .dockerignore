@@ -1,0 +1,16 @@
+.git
+data
+logs
+ssh
+certs
+backup.json
+override.env
+docker-compose.override.yml
+app/config.php
+config/wg0.conf
+config/wg1.conf
+config/dnstt
+config/hwid.json
+update
+.idea
+.vscode

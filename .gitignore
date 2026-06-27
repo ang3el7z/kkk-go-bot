@@ -1,4 +1,6 @@
 /app/config.php
+/data/*
+!/data/.gitkeep
 /certs/*
 !/certs/.gitkeep
 /logs/*

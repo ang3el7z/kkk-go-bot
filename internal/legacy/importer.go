@@ -1,0 +1,167 @@
+package legacy
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+
+	"github.com/ang3el7z/kkk-go-bot/internal/config"
+	"github.com/ang3el7z/kkk-go-bot/internal/storage"
+)
+
+type Importer struct {
+	cfg  config.Config
+	repo storage.Repository
+}
+
+func NewImporter(cfg config.Config, repo storage.Repository) *Importer {
+	return &Importer{cfg: cfg, repo: repo}
+}
+
+func (i *Importer) Import(ctx context.Context) error {
+	if err := i.importPHPConfig(ctx); err != nil {
+		return err
+	}
+	if err := i.importJSONSetting(ctx, "pac", filepath.Join(i.cfg.ConfigDir, "pac.json")); err != nil {
+		return err
+	}
+	if err := i.importClients(ctx, "wg", filepath.Join(i.cfg.ConfigDir, "clients.json")); err != nil {
+		return err
+	}
+	if err := i.importClients(ctx, "wg1", filepath.Join(i.cfg.ConfigDir, "clients1.json")); err != nil {
+		return err
+	}
+	if err := i.importJSONSetting(ctx, "hwid", filepath.Join(i.cfg.ConfigDir, "hwid.json")); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (i *Importer) importPHPConfig(ctx context.Context) error {
+	data, err := os.ReadFile(i.cfg.LegacyPHPPath)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	text := string(data)
+	for _, id := range parseAdminIDs(text) {
+		if err := i.repo.AddAdmin(ctx, storage.Admin{TelegramID: id}); err != nil {
+			return err
+		}
+	}
+	redacted := redactPHPConfig(text)
+	return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy.config_php.redacted", ValueJSON: mustJSON(redacted)})
+}
+
+func (i *Importer) importJSONSetting(ctx context.Context, key, path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !json.Valid(data) {
+		return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + key + ".raw", ValueJSON: mustJSON(string(data))})
+	}
+	return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + key, ValueJSON: string(data)})
+}
+
+func (i *Importer) importClients(ctx context.Context, protocol, path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !json.Valid(data) {
+		return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + protocol + ".clients.raw", ValueJSON: mustJSON(string(data))})
+	}
+	var payload any
+	if err := json.Unmarshal(data, &payload); err != nil {
+		return err
+	}
+	for name, value := range legacyClientItems(payload) {
+		body, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		client := storage.Client{
+			ID:         fmt.Sprintf("%s:%s", protocol, name),
+			Protocol:   protocol,
+			Name:       name,
+			Enabled:    true,
+			ConfigJSON: string(body),
+		}
+		if err := i.repo.SaveClient(ctx, client); err != nil {
+			return err
+		}
+	}
+	return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + protocol + ".clients", ValueJSON: string(data)})
+}
+
+func legacyClientItems(payload any) map[string]any {
+	items := map[string]any{}
+	switch v := payload.(type) {
+	case map[string]any:
+		for name, value := range v {
+			items[name] = value
+		}
+	case []any:
+		for idx, value := range v {
+			name := fmt.Sprintf("%d", idx)
+			if obj, ok := value.(map[string]any); ok {
+				if rawName, ok := obj["name"].(string); ok && rawName != "" {
+					name = rawName
+				}
+			}
+			items[name] = value
+		}
+	}
+	return items
+}
+
+func parseAdminIDs(text string) []int64 {
+	re := regexp.MustCompile(`['"]admin['"]\s*=>\s*\[([^\]]*)\]`)
+	match := re.FindStringSubmatch(text)
+	if len(match) < 2 {
+		return nil
+	}
+	numRe := regexp.MustCompile(`\d+`)
+	var ids []int64
+	for _, raw := range numRe.FindAllString(match[1], -1) {
+		var id int64
+		_, _ = fmt.Sscan(raw, &id)
+		if id != 0 {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func redactPHPConfig(text string) string {
+	lines := strings.Split(text, "\n")
+	secretKeys := []string{"key", "token", "password", "passwd", "secret"}
+	for idx, line := range lines {
+		lower := strings.ToLower(line)
+		for _, key := range secretKeys {
+			if strings.Contains(lower, key) && strings.Contains(line, "=>") {
+				lines[idx] = regexp.MustCompile(`=>\s*['"][^'"]*['"]`).ReplaceAllString(line, `=> '***REDACTED***'`)
+				break
+			}
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func mustJSON(value string) string {
+	data, _ := json.Marshal(value)
+	return string(data)
+}

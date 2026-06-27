@@ -1,0 +1,119 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/ang3el7z/kkk-go-bot/internal/config"
+	"github.com/ang3el7z/kkk-go-bot/internal/legacy"
+	"github.com/ang3el7z/kkk-go-bot/internal/services"
+	"github.com/ang3el7z/kkk-go-bot/internal/storage"
+	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
+	"github.com/ang3el7z/kkk-go-bot/internal/usecase"
+)
+
+type Options struct {
+	Smoke bool
+}
+
+func Run(ctx context.Context, cfg config.Config, opts Options) error {
+	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
+		return err
+	}
+	repo, err := storage.OpenSQLite(cfg.DBPath)
+	if err != nil {
+		return err
+	}
+	defer repo.Close()
+	if err := repo.Migrate(ctx); err != nil {
+		return err
+	}
+	if err := legacy.NewImporter(cfg, repo).Import(ctx); err != nil {
+		return err
+	}
+	registry := services.NewRegistry(repo, services.ComposeFile{Path: cfg.ComposePath}, services.DockerRuntime{})
+	if err := registry.Refresh(ctx); err != nil {
+		return err
+	}
+
+	if opts.Smoke {
+		admins, _ := repo.ListAdmins(ctx)
+		menuServices, _ := repo.MenuServices(ctx)
+		fmt.Printf("db=%s admins=%d menu_services=%d\n", cfg.DBPath, len(admins), len(menuServices))
+		return nil
+	}
+	if err := cfg.ValidateRuntime(); err != nil {
+		return err
+	}
+
+	bot := usecase.NewBot(repo)
+	client := telegram.NewAPIClient(cfg.TelegramToken)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	})
+	mux.HandleFunc("/telegram/webhook", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		var update telegram.Update
+		if err := json.NewDecoder(r.Body).Decode(&update); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := handleUpdate(r.Context(), bot, client, update); err != nil {
+			log.Printf("handle update: %v", err)
+			http.Error(w, "update failed", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	server := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		log.Printf("kkk-go-bot listening on %s", cfg.HTTPAddr)
+		errCh <- server.ListenAndServe()
+	}()
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return server.Shutdown(shutdownCtx)
+	case err := <-errCh:
+		if err == http.ErrServerClosed {
+			return nil
+		}
+		return err
+	}
+}
+
+func handleUpdate(ctx context.Context, bot *usecase.Bot, client telegram.Client, update telegram.Update) error {
+	switch {
+	case update.Message != nil:
+		result, err := bot.HandleMessage(ctx, *update.Message)
+		if err != nil {
+			return err
+		}
+		return client.SendMessage(update.Message.Chat.ID, result.Text, result.Keyboard)
+	case update.CallbackQuery != nil:
+		result, err := bot.HandleCallback(ctx, *update.CallbackQuery)
+		if err != nil {
+			return err
+		}
+		return client.AnswerCallbackQuery(update.CallbackQuery.ID, result.Text, result.ShowAlert)
+	default:
+		return nil
+	}
+}
