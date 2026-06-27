@@ -312,6 +312,12 @@ func (b *Bot) handleXrayCallback(ctx context.Context, telegramID int64, data str
 			return CallbackResult{}, true, err
 		}
 		return CallbackResult{Text: "Xray stats reset marker saved", ShowAlert: false}, true, nil
+	case "resetuuid":
+		if err := b.xray.ResetUUID(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.xrayMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
 	case "link":
 		link, err := b.xray.Link(ctx, value)
 		if err != nil {
@@ -501,7 +507,7 @@ func callbackForService(name string) string {
 }
 
 func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
-	clients, err := b.xray.List(ctx)
+	clients, err := b.xray.Info(ctx)
 	if err != nil {
 		return MessageResult{}, err
 	}
@@ -512,7 +518,11 @@ func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
 		if client.Enabled {
 			status = "on"
 		}
-		lines = append(lines, fmt.Sprintf("%s %s", status, client.Name))
+		traffic := ""
+		if client.Download != "" || client.Upload != "" {
+			traffic = fmt.Sprintf(" down=%s up=%s", client.Download, client.Upload)
+		}
+		lines = append(lines, fmt.Sprintf("%s %s%s", status, client.Name, traffic))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "toggle " + client.Name, Data: "xray:toggle:" + client.ID},
 			{Text: "link", Data: "xray:link:" + client.ID},
@@ -522,6 +532,7 @@ func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
 			{Text: "rename", Data: "xray:rename:" + client.ID},
 			{Text: "timer", Data: "xray:timer:" + client.ID},
 			{Text: "reset stats", Data: "xray:resetstats:" + client.ID},
+			{Text: "reset uuid", Data: "xray:resetuuid:" + client.ID},
 			{Text: "delete", Data: "xray:delete:" + client.ID},
 		})
 	}

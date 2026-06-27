@@ -16,6 +16,9 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "xray.json"), []byte(`{"inbounds":[{"settings":{"clients":[]}}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "xray.stats"), []byte(`{"users":{"0":{"global":{"download":1024,"upload":2048},"session":{"download":1024,"upload":2048}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	repo, err := storage.OpenSQLite(filepath.Join(dir, "bot.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +44,17 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	if err := manager.ResetUserStats(ctx, client.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := manager.ResetUUID(ctx, client.ID); err != nil {
+		t.Fatal(err)
+	}
+	clientsAfterReset, err := manager.List(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(clientsAfterReset) != 1 || clientsAfterReset[0].ID == client.ID {
+		t.Fatalf("uuid should reset: before=%s after=%+v", client.ID, clientsAfterReset)
+	}
+	client = clientsAfterReset[0]
 	link, err := manager.Link(ctx, client.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +75,13 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	}
 	if len(png) == 0 {
 		t.Fatal("empty QR")
+	}
+	info, err := manager.Info(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(info) != 1 || info[0].Download == "" || info[0].Upload == "" {
+		t.Fatalf("bad info: %+v", info)
 	}
 	clients, err := manager.List(ctx)
 	if err != nil {

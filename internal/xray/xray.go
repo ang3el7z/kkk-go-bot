@@ -21,12 +21,38 @@ type Manager struct {
 	repo storage.Repository
 }
 
+type ClientInfo struct {
+	ID       string
+	Name     string
+	Enabled  bool
+	Download string
+	Upload   string
+}
+
 func NewManager(cfg config.Config, repo storage.Repository) *Manager {
 	return &Manager{cfg: cfg, repo: repo}
 }
 
 func (m *Manager) List(ctx context.Context) ([]storage.Client, error) {
 	return m.repo.ListClients(ctx, "xray")
+}
+
+func (m *Manager) Info(ctx context.Context) ([]ClientInfo, error) {
+	clients, err := m.repo.ListClients(ctx, "xray")
+	if err != nil {
+		return nil, err
+	}
+	stats := m.readStats()
+	out := make([]ClientInfo, 0, len(clients))
+	for idx, client := range clients {
+		info := ClientInfo{ID: client.ID, Name: client.Name, Enabled: client.Enabled}
+		if userStats := stats.user(idx); userStats != nil {
+			info.Download = bytesLabel(userStats.download())
+			info.Upload = bytesLabel(userStats.upload())
+		}
+		out = append(out, info)
+	}
+	return out, nil
 }
 
 func (m *Manager) Add(ctx context.Context, email string) (storage.Client, error) {
@@ -82,6 +108,32 @@ func (m *Manager) Rename(ctx context.Context, id, name string) error {
 	body, _ := json.Marshal(payload)
 	client.Name = name
 	client.ConfigJSON = string(body)
+	if err := m.repo.SaveClient(ctx, client); err != nil {
+		return err
+	}
+	return m.Render(ctx)
+}
+
+func (m *Manager) ResetUUID(ctx context.Context, id string) error {
+	client, err := m.client(ctx, id)
+	if err != nil {
+		return err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(client.ConfigJSON), &payload); err != nil {
+		return err
+	}
+	newID, err := uuid()
+	if err != nil {
+		return err
+	}
+	payload["id"] = newID
+	body, _ := json.Marshal(payload)
+	client.ID = "xray:" + newID
+	client.ConfigJSON = string(body)
+	if err := m.repo.DeleteClient(ctx, id); err != nil {
+		return err
+	}
 	if err := m.repo.SaveClient(ctx, client); err != nil {
 		return err
 	}
@@ -266,6 +318,66 @@ func setClients(doc map[string]any, clients []any) error {
 	}
 	settings["clients"] = clients
 	return nil
+}
+
+type xrayStats map[string]any
+
+func (m *Manager) readStats() xrayStats {
+	data, err := os.ReadFile(filepath.Join(m.cfg.ConfigDir, "xray.stats"))
+	if err != nil {
+		return nil
+	}
+	var stats xrayStats
+	if err := json.Unmarshal(data, &stats); err != nil {
+		return nil
+	}
+	return stats
+}
+
+func (s xrayStats) user(idx int) xrayStats {
+	users, _ := s["users"].(map[string]any)
+	if users == nil {
+		return nil
+	}
+	user, _ := users[fmt.Sprintf("%d", idx)].(map[string]any)
+	if user == nil {
+		return nil
+	}
+	return xrayStats(user)
+}
+
+func (s xrayStats) download() int64 {
+	return nestedInt64(s, "global", "download") + nestedInt64(s, "session", "download")
+}
+
+func (s xrayStats) upload() int64 {
+	return nestedInt64(s, "global", "upload") + nestedInt64(s, "session", "upload")
+}
+
+func nestedInt64(values map[string]any, group, key string) int64 {
+	nested, _ := values[group].(map[string]any)
+	if nested == nil {
+		return 0
+	}
+	switch value := nested[key].(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	default:
+		return 0
+	}
+}
+
+func bytesLabel(v int64) string {
+	units := []string{"B", "KiB", "MiB", "GiB", "TiB"}
+	value := float64(v)
+	unit := 0
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+	return fmt.Sprintf("%.2f %s", value, units[unit])
 }
 
 func uuid() (string, error) {
