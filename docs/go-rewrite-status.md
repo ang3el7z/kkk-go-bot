@@ -9,13 +9,13 @@
 - Admin bootstrap and `/id`.
 - Main menu generated from service availability.
 - Compose profile `go-bot`.
-- WireGuard first parity slice: DB-backed clients/server config, key generation, add/delete/toggle, reply flows for rename/timer/DNS/MTU/AllowedIPs/default AllowedIPs, Telegram config document upload, QR image upload, Amnezia toggle/key material, richer menu status, `wg0.conf`/`wg1.conf` rendering, optional reload via `WG_RELOAD=1`.
+- WireGuard first parity slice: DB-backed clients/server config, key generation, add/delete/toggle, reply flows for rename/timer/DNS/MTU/AllowedIPs/default AllowedIPs, Telegram config document upload, QR image upload, Amnezia toggle/key material, live traffic/handshake display via Docker exec, richer menu status, `wg0.conf`/`wg1.conf` rendering, optional reload via `WG_RELOAD=1`.
 - Xray first parity slice: import users from `xray.json`, DB-backed add/delete/toggle/rename/timer, VLESS link + QR, reset-stats marker, render active users back to `config/xray.json`, Telegram menu callbacks.
 - PAC/subscription first slice: `/pac?s=<uuid>&t=s|si|cl` returns VLESS, sing-box JSON, or Clash YAML from DB-backed Xray users.
 
 ## Remaining For Full Parity
 
-- WireGuard remaining: live traffic/handshake display from running WG containers.
+- WireGuard remaining: torrent/exchange blocking toggles, endpoint switch, full global subnet list UI.
 - Xray remaining: full stats ingestion/display, routes, templates, HWID, transport switching, reset-user UUID flow.
 - PAC/subscription remaining: legacy URL compatibility, templates, app redirect imports, Windows sing-box ZIP.
 - PAC/routing list editors and remote list updates.

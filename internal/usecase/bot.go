@@ -383,6 +383,12 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 		if client.ExpiresAt != "" {
 			details = append(details, "until="+client.ExpiresAt)
 		}
+		if client.Handshake != "" {
+			details = append(details, "handshake="+client.Handshake)
+		}
+		if client.Transfer != "" {
+			details = append(details, "transfer="+client.Transfer)
+		}
 		lines = append(lines, fmt.Sprintf("%s %s %s", status, client.Name, strings.Join(details, " ")))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "toggle " + client.Name, Data: "wg:toggle:" + client.ID},

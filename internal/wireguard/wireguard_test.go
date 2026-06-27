@@ -89,3 +89,19 @@ func TestAddToggleDeletePeer(t *testing.T) {
 		t.Fatalf("client should be deleted: %+v", clients)
 	}
 }
+
+func TestParseWGShow(t *testing.T) {
+	statuses := parseWGShow(`interface: wg0
+peer: pubkey1
+  latest handshake: 1 minute, 2 seconds ago
+  transfer: 1.00 KiB received, 2.00 KiB sent
+peer: pubkey2
+  transfer: 3.00 KiB received, 4.00 KiB sent
+`)
+	if statuses["pubkey1"].Handshake == "" || statuses["pubkey1"].Transfer == "" {
+		t.Fatalf("missing status: %+v", statuses)
+	}
+	if statuses["pubkey2"].Transfer == "" {
+		t.Fatalf("missing second peer: %+v", statuses)
+	}
+}

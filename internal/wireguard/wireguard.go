@@ -8,7 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
+	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -43,6 +46,13 @@ type ClientInfo struct {
 	DNS        string
 	MTU        string
 	ExpiresAt  string
+	Handshake  string
+	Transfer   string
+}
+
+type PeerStatus struct {
+	Handshake string
+	Transfer  string
 }
 
 type Manager struct {
@@ -72,10 +82,15 @@ func (m *Manager) Info(ctx context.Context, instance string) (Info, error) {
 		return Info{}, err
 	}
 	info := Info{Instance: instance, Amnezia: amnezia, DefaultAllowedIPs: defaultAllowedIPs}
+	statuses, _ := dockerWGStatus(ctx, instance)
 	for _, client := range clients {
 		cfg, err := decodeConfig(client.ConfigJSON)
 		if err != nil {
 			continue
+		}
+		public := ""
+		if private := cfg.Interface["PrivateKey"]; private != "" {
+			public, _ = publicKey(private)
 		}
 		item := ClientInfo{
 			ID:        client.ID,
@@ -88,6 +103,10 @@ func (m *Manager) Info(ctx context.Context, instance string) (Info, error) {
 		}
 		if len(cfg.Peers) > 0 {
 			item.AllowedIPs = cfg.Peers[0]["AllowedIPs"]
+		}
+		if status, ok := statuses[public]; ok {
+			item.Handshake = status.Handshake
+			item.Transfer = status.Transfer
 		}
 		info.Clients = append(info.Clients, item)
 	}
@@ -812,6 +831,150 @@ func reload(ctx context.Context, instance string) error {
 	service := instance
 	cmd := fmt.Sprintf("docker compose exec -T %s sh -lc 'wg syncconf wg0 <(wg-quick strip wg0)'", service)
 	return exec.CommandContext(ctx, "sh", "-lc", cmd).Run()
+}
+
+func dockerWGStatus(ctx context.Context, instance string) (map[string]PeerStatus, error) {
+	socket := "/var/run/docker.sock"
+	if _, err := os.Stat(socket); err != nil {
+		return nil, err
+	}
+	client := dockerHTTPClient(socket)
+	containerID, err := dockerContainerID(ctx, client, instance)
+	if err != nil {
+		return nil, err
+	}
+	execID, err := dockerCreateExec(ctx, client, containerID, []string{"wg", "show"})
+	if err != nil {
+		return nil, err
+	}
+	out, err := dockerStartExec(ctx, client, execID)
+	if err != nil {
+		return nil, err
+	}
+	return parseWGShow(string(out)), nil
+}
+
+func dockerHTTPClient(socket string) *http.Client {
+	return &http.Client{Transport: &http.Transport{
+		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "unix", socket)
+		},
+	}}
+}
+
+func dockerContainerID(ctx context.Context, client *http.Client, service string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://docker/containers/json", nil)
+	if err != nil {
+		return "", err
+	}
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	var containers []struct {
+		ID     string            `json:"Id"`
+		Labels map[string]string `json:"Labels"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&containers); err != nil {
+		return "", err
+	}
+	for _, container := range containers {
+		if container.Labels["com.docker.compose.service"] == service {
+			return container.ID, nil
+		}
+	}
+	return "", errors.New("WireGuard container not found")
+}
+
+func dockerCreateExec(ctx context.Context, client *http.Client, containerID string, cmd []string) (string, error) {
+	body, _ := json.Marshal(map[string]any{
+		"AttachStdout": true,
+		"AttachStderr": true,
+		"Cmd":          cmd,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker/containers/"+containerID+"/exec", strings.NewReader(string(body)))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	var out struct {
+		ID string `json:"Id"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if out.ID == "" {
+		return "", errors.New("Docker exec id is empty")
+	}
+	return out.ID, nil
+}
+
+func dockerStartExec(ctx context.Context, client *http.Client, execID string) ([]byte, error) {
+	body := strings.NewReader(`{"Detach":false,"Tty":false}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://docker/exec/"+execID+"/start", body)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	data, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, err
+	}
+	return demuxDockerStream(data), nil
+}
+
+func demuxDockerStream(data []byte) []byte {
+	var out []byte
+	for len(data) >= 8 {
+		size := int(data[4])<<24 | int(data[5])<<16 | int(data[6])<<8 | int(data[7])
+		data = data[8:]
+		if size <= 0 || size > len(data) {
+			break
+		}
+		out = append(out, data[:size]...)
+		data = data[size:]
+	}
+	if len(out) == 0 {
+		return data
+	}
+	return out
+}
+
+func parseWGShow(text string) map[string]PeerStatus {
+	statuses := map[string]PeerStatus{}
+	current := ""
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "peer: ") {
+			current = strings.TrimPrefix(line, "peer: ")
+			statuses[current] = PeerStatus{}
+			continue
+		}
+		if current == "" {
+			continue
+		}
+		status := statuses[current]
+		if strings.HasPrefix(line, "latest handshake: ") {
+			status.Handshake = strings.TrimPrefix(line, "latest handshake: ")
+		}
+		if strings.HasPrefix(line, "transfer: ") {
+			status.Transfer = strings.TrimPrefix(line, "transfer: ")
+		}
+		statuses[current] = status
+	}
+	return statuses
 }
 
 func safeName(name string) string {
