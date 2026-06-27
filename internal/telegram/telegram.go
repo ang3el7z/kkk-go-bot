@@ -4,7 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -49,8 +52,14 @@ type InlineButton struct {
 	URL  string
 }
 
+type Document struct {
+	Filename string
+	Content  []byte
+}
+
 type Client interface {
 	SendMessage(chatID int64, text string, keyboard *InlineKeyboard) error
+	SendDocument(chatID int64, filename string, content []byte) error
 	AnswerCallbackQuery(callbackID, text string, showAlert bool) error
 }
 
@@ -86,6 +95,37 @@ func (c *APIClient) AnswerCallbackQuery(callbackID, text string, showAlert bool)
 		"text":              text,
 		"show_alert":        showAlert,
 	})
+}
+
+func (c *APIClient) SendDocument(chatID int64, filename string, content []byte) error {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	_ = writer.WriteField("chat_id", strconv.FormatInt(chatID, 10))
+	part, err := writer.CreateFormFile("document", filename)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(part, bytes.NewReader(content)); err != nil {
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendDocument", c.token)
+	req, err := http.NewRequest(http.MethodPost, url, &body)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	res, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return fmt.Errorf("telegram sendDocument failed: %s", res.Status)
+	}
+	return nil
 }
 
 func (c *APIClient) call(method string, payload any) error {

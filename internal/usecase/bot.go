@@ -2,8 +2,10 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
@@ -28,6 +30,7 @@ type CallbackResult struct {
 	Text      string
 	ShowAlert bool
 	Keyboard  *telegram.InlineKeyboard
+	Document  *telegram.Document
 }
 
 func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageResult, error) {
@@ -36,6 +39,9 @@ func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageR
 	}
 	if err := b.requireAdminOrBootstrap(ctx, msg.From); err != nil {
 		return MessageResult{Text: "Unauthorized"}, nil
+	}
+	if result, ok, err := b.handlePendingMessage(ctx, msg); ok || err != nil {
+		return result, err
 	}
 	switch msg.Text {
 	case "/start", "/menu", "":
@@ -51,7 +57,7 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 	if err := b.requireAdminOrBootstrap(ctx, query.From); err != nil {
 		return CallbackResult{Text: "Unauthorized", ShowAlert: true}, nil
 	}
-	if result, ok, err := b.handleWireGuardCallback(ctx, query.Data); ok || err != nil {
+	if result, ok, err := b.handleWireGuardCallback(ctx, query.From.ID, query.Data); ok || err != nil {
 		return result, err
 	}
 	name, ok := strings.CutPrefix(query.Data, "service:")
@@ -88,7 +94,7 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 	return CallbackResult{Text: service.DisplayName, ShowAlert: false}, nil
 }
 
-func (b *Bot) handleWireGuardCallback(ctx context.Context, data string) (CallbackResult, bool, error) {
+func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, data string) (CallbackResult, bool, error) {
 	if b.wg == nil || !strings.HasPrefix(data, "wg:") {
 		return CallbackResult{}, false, nil
 	}
@@ -116,17 +122,68 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, data string) (Callbac
 		}
 		return CallbackResult{Text: "WireGuard client deleted", ShowAlert: false}, true, nil
 	case "download":
-		_, conf, err := b.wg.ClientConfig(ctx, value)
+		filename, conf, err := b.wg.ClientConfig(ctx, value)
 		if err != nil {
 			return CallbackResult{}, true, err
 		}
-		if len(conf) > 180 {
-			conf = conf[:180] + "..."
+		return CallbackResult{Document: &telegram.Document{Filename: filename, Content: []byte(conf)}}, true, nil
+	case "rename", "timer", "dns", "mtu", "allowedips":
+		if err := b.setPending(ctx, telegramID, action, value); err != nil {
+			return CallbackResult{}, true, err
 		}
-		return CallbackResult{Text: conf, ShowAlert: true}, true, nil
+		return CallbackResult{Text: promptForWGAction(action), ShowAlert: true}, true, nil
 	default:
 		return CallbackResult{Text: "Unknown WireGuard action", ShowAlert: true}, true, nil
 	}
+}
+
+func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (MessageResult, bool, error) {
+	op, ok, err := b.repo.GetPendingOperation(ctx, msg.From.ID)
+	if err != nil || !ok {
+		return MessageResult{}, ok, err
+	}
+	if err := b.repo.ClearPendingOperation(ctx, msg.From.ID); err != nil {
+		return MessageResult{}, true, err
+	}
+	var payload struct {
+		ClientID string `json:"client_id"`
+	}
+	if err := json.Unmarshal([]byte(op.PayloadJSON), &payload); err != nil {
+		return MessageResult{}, true, err
+	}
+	switch op.Operation {
+	case "wg_rename":
+		err = b.wg.Rename(ctx, payload.ClientID, msg.Text)
+	case "wg_timer":
+		err = b.wg.SetExpiry(ctx, payload.ClientID, msg.Text)
+	case "wg_dns":
+		err = b.wg.SetDNS(ctx, payload.ClientID, msg.Text)
+	case "wg_mtu":
+		err = b.wg.SetMTU(ctx, payload.ClientID, msg.Text)
+	case "wg_allowedips":
+		err = b.wg.SetAllowedIPs(ctx, payload.ClientID, msg.Text)
+	default:
+		return MessageResult{Text: "Unknown pending operation"}, true, nil
+	}
+	if err != nil {
+		return MessageResult{}, true, err
+	}
+	instance, _, _ := strings.Cut(payload.ClientID, ":")
+	result, err := b.wgMenu(ctx, instance)
+	return result, true, err
+}
+
+func (b *Bot) setPending(ctx context.Context, telegramID int64, action, clientID string) error {
+	payload, err := json.Marshal(map[string]string{"client_id": clientID})
+	if err != nil {
+		return err
+	}
+	return b.repo.SetPendingOperation(ctx, storage.PendingOperation{
+		TelegramID:  telegramID,
+		Operation:   "wg_" + action,
+		PayloadJSON: string(payload),
+		ExpiresAt:   time.Now().UTC().Add(15 * time.Minute),
+	})
 }
 
 func (b *Bot) requireAdminOrBootstrap(ctx context.Context, user telegram.User) error {
@@ -197,12 +254,38 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 			{Text: "download", Data: "wg:download:" + client.ID},
 			{Text: "delete", Data: "wg:delete:" + client.ID},
 		})
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+			{Text: "rename", Data: "wg:rename:" + client.ID},
+			{Text: "timer", Data: "wg:timer:" + client.ID},
+			{Text: "DNS", Data: "wg:dns:" + client.ID},
+			{Text: "MTU", Data: "wg:mtu:" + client.ID},
+		})
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+			{Text: "AllowedIPs", Data: "wg:allowedips:" + client.ID},
+		})
 	}
 	text := "WireGuard " + instance
 	if len(lines) > 0 {
 		text += "\n\n" + strings.Join(lines, "\n")
 	}
 	return MessageResult{Text: text, Keyboard: keyboard}, nil
+}
+
+func promptForWGAction(action string) string {
+	switch action {
+	case "rename":
+		return "Send new client name"
+	case "timer":
+		return "Send expiry as YYYY-MM-DD HH:MM:SS, or 0 to clear"
+	case "dns":
+		return "Send DNS servers separated by comma, or 0 to clear"
+	case "mtu":
+		return "Send MTU, or 0 to clear"
+	case "allowedips":
+		return "Send AllowedIPs, e.g. 0.0.0.0/0"
+	default:
+		return "Send value"
+	}
 }
 
 func callbackForService(name string) string {

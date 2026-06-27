@@ -154,6 +154,124 @@ func (m *Manager) Toggle(ctx context.Context, id string) error {
 	return m.rebuildServerPeers(ctx, instance)
 }
 
+func (m *Manager) Rename(ctx context.Context, id, name string) error {
+	if strings.TrimSpace(name) == "" {
+		return errors.New("WireGuard client name is empty")
+	}
+	instance, _, ok := strings.Cut(id, ":")
+	if !ok {
+		return errors.New("invalid WireGuard client id")
+	}
+	client, err := m.clientByID(ctx, instance, id)
+	if err != nil {
+		return err
+	}
+	cfg, err := decodeConfig(client.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	cfg.Interface["## name"] = name
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	client.Name = name
+	client.ConfigJSON = string(body)
+	if err := m.repo.SaveClient(ctx, client); err != nil {
+		return err
+	}
+	return m.rebuildServerPeers(ctx, instance)
+}
+
+func (m *Manager) SetExpiry(ctx context.Context, id, expiresAt string) error {
+	instance, _, ok := strings.Cut(id, ":")
+	if !ok {
+		return errors.New("invalid WireGuard client id")
+	}
+	client, err := m.clientByID(ctx, instance, id)
+	if err != nil {
+		return err
+	}
+	cfg, err := decodeConfig(client.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(expiresAt) == "" || strings.TrimSpace(expiresAt) == "0" {
+		delete(cfg.Interface, "## time")
+	} else {
+		if _, err := time.Parse("2006-01-02 15:04:05", expiresAt); err != nil {
+			return fmt.Errorf("time format must be YYYY-MM-DD HH:MM:SS")
+		}
+		cfg.Interface["## time"] = expiresAt
+	}
+	return m.saveClientConfigAndRebuild(ctx, instance, client, cfg)
+}
+
+func (m *Manager) SetDNS(ctx context.Context, id, dns string) error {
+	instance, _, ok := strings.Cut(id, ":")
+	if !ok {
+		return errors.New("invalid WireGuard client id")
+	}
+	client, err := m.clientByID(ctx, instance, id)
+	if err != nil {
+		return err
+	}
+	cfg, err := decodeConfig(client.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(dns) == "" || strings.TrimSpace(dns) == "0" {
+		delete(cfg.Interface, "DNS")
+	} else {
+		cfg.Interface["DNS"] = strings.TrimSpace(dns)
+	}
+	return m.saveClientConfigAndRebuild(ctx, instance, client, cfg)
+}
+
+func (m *Manager) SetMTU(ctx context.Context, id, mtu string) error {
+	instance, _, ok := strings.Cut(id, ":")
+	if !ok {
+		return errors.New("invalid WireGuard client id")
+	}
+	client, err := m.clientByID(ctx, instance, id)
+	if err != nil {
+		return err
+	}
+	cfg, err := decodeConfig(client.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(mtu) == "" || strings.TrimSpace(mtu) == "0" {
+		delete(cfg.Interface, "MTU")
+	} else {
+		cfg.Interface["MTU"] = strings.TrimSpace(mtu)
+	}
+	return m.saveClientConfigAndRebuild(ctx, instance, client, cfg)
+}
+
+func (m *Manager) SetAllowedIPs(ctx context.Context, id, allowedIPs string) error {
+	if strings.TrimSpace(allowedIPs) == "" {
+		return errors.New("AllowedIPs is empty")
+	}
+	instance, _, ok := strings.Cut(id, ":")
+	if !ok {
+		return errors.New("invalid WireGuard client id")
+	}
+	client, err := m.clientByID(ctx, instance, id)
+	if err != nil {
+		return err
+	}
+	cfg, err := decodeConfig(client.ConfigJSON)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Peers) == 0 {
+		return errors.New("WireGuard client has no peer")
+	}
+	cfg.Peers[0]["AllowedIPs"] = strings.TrimSpace(allowedIPs)
+	return m.saveClientConfigAndRebuild(ctx, instance, client, cfg)
+}
+
 func (m *Manager) ClientConfig(ctx context.Context, id string) (string, string, error) {
 	instance, _, ok := strings.Cut(id, ":")
 	if !ok {
@@ -168,6 +286,18 @@ func (m *Manager) ClientConfig(ctx context.Context, id string) (string, string, 
 		return "", "", err
 	}
 	return safeName(client.Name) + ".conf", Render(cfg), nil
+}
+
+func (m *Manager) saveClientConfigAndRebuild(ctx context.Context, instance string, client storage.Client, cfg Config) error {
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	client.ConfigJSON = string(body)
+	if err := m.repo.SaveClient(ctx, client); err != nil {
+		return err
+	}
+	return m.rebuildServerPeers(ctx, instance)
 }
 
 func (m *Manager) server(ctx context.Context, instance string) (Config, error) {
@@ -242,6 +372,9 @@ func (m *Manager) rebuildServerPeers(ctx context.Context, instance string) error
 			"## name":    client.Name,
 			"PublicKey":  public,
 			"AllowedIPs": cfg.Interface["Address"],
+		}
+		if expiry := cfg.Interface["## time"]; expiry != "" {
+			peer["## time"] = expiry
 		}
 		if !client.Enabled {
 			peer = commentPeer(peer)

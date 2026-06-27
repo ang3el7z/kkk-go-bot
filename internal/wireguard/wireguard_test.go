@@ -35,11 +35,23 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	if err := manager.Toggle(ctx, client.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := manager.Rename(ctx, client.ID, "renamed"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetDNS(ctx, client.ID, "1.1.1.1,8.8.8.8"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetMTU(ctx, client.ID, "1420"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetAllowedIPs(ctx, client.ID, "10.0.0.0/8"); err != nil {
+		t.Fatal(err)
+	}
 	clients, err := manager.List(ctx, "wg")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(clients) != 1 || clients[0].Enabled {
+	if len(clients) != 1 || clients[0].Enabled || clients[0].Name != "renamed" {
 		t.Fatalf("client should be disabled: %+v", clients)
 	}
 	if err := manager.Delete(ctx, client.ID); err != nil {

@@ -48,6 +48,15 @@ type WireGuardServer struct {
 	UpdatedAt  time.Time
 }
 
+type PendingOperation struct {
+	ID          int64
+	TelegramID  int64
+	Operation   string
+	PayloadJSON string
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+}
+
 type Repository interface {
 	Migrate(ctx context.Context) error
 	Close() error
@@ -65,4 +74,7 @@ type Repository interface {
 	DeleteClient(ctx context.Context, id string) error
 	SaveWireGuardServer(ctx context.Context, server WireGuardServer) error
 	GetWireGuardServer(ctx context.Context, instance string) (WireGuardServer, bool, error)
+	SetPendingOperation(ctx context.Context, op PendingOperation) error
+	GetPendingOperation(ctx context.Context, telegramID int64) (PendingOperation, bool, error)
+	ClearPendingOperation(ctx context.Context, telegramID int64) error
 }

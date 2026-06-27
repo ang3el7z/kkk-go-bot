@@ -307,6 +307,51 @@ func (s *SQLite) GetWireGuardServer(ctx context.Context, instance string) (WireG
 	return server, true, nil
 }
 
+func (s *SQLite) SetPendingOperation(ctx context.Context, op PendingOperation) error {
+	nowTime := time.Now().UTC()
+	if op.CreatedAt.IsZero() {
+		op.CreatedAt = nowTime
+	}
+	if op.ExpiresAt.IsZero() {
+		op.ExpiresAt = nowTime.Add(15 * time.Minute)
+	}
+	if op.PayloadJSON == "" {
+		op.PayloadJSON = "{}"
+	}
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM pending_operations WHERE telegram_id = ?`, op.TelegramID); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO pending_operations (telegram_id, operation, payload_json, created_at, expires_at)
+VALUES (?, ?, ?, ?, ?)`,
+		op.TelegramID, op.Operation, op.PayloadJSON, timeString(op.CreatedAt), timeString(op.ExpiresAt))
+	return err
+}
+
+func (s *SQLite) GetPendingOperation(ctx context.Context, telegramID int64) (PendingOperation, bool, error) {
+	var op PendingOperation
+	var created, expires string
+	err := s.db.QueryRowContext(ctx, `
+SELECT id, telegram_id, operation, payload_json, created_at, expires_at
+FROM pending_operations
+WHERE telegram_id = ? AND expires_at > ?`,
+		telegramID, now()).Scan(&op.ID, &op.TelegramID, &op.Operation, &op.PayloadJSON, &created, &expires)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PendingOperation{}, false, nil
+	}
+	if err != nil {
+		return PendingOperation{}, false, err
+	}
+	op.CreatedAt, _ = parseTime(created)
+	op.ExpiresAt, _ = parseTime(expires)
+	return op, true, nil
+}
+
+func (s *SQLite) ClearPendingOperation(ctx context.Context, telegramID int64) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM pending_operations WHERE telegram_id = ?`, telegramID)
+	return err
+}
+
 type scanner interface{ Scan(dest ...any) error }
 
 func scanService(row scanner) (Service, error) {

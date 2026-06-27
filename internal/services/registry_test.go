@@ -45,6 +45,13 @@ func (m *memoryRepo) SaveWireGuardServer(context.Context, storage.WireGuardServe
 func (m *memoryRepo) GetWireGuardServer(context.Context, string) (storage.WireGuardServer, bool, error) {
 	return storage.WireGuardServer{}, false, nil
 }
+func (m *memoryRepo) SetPendingOperation(context.Context, storage.PendingOperation) error {
+	return nil
+}
+func (m *memoryRepo) GetPendingOperation(context.Context, int64) (storage.PendingOperation, bool, error) {
+	return storage.PendingOperation{}, false, nil
+}
+func (m *memoryRepo) ClearPendingOperation(context.Context, int64) error { return nil }
 
 type fakeCompose map[string]bool
 

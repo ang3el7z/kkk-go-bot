@@ -13,6 +13,7 @@ import (
 type repoStub struct {
 	admins   map[int64]bool
 	services []storage.Service
+	pending  *storage.PendingOperation
 }
 
 func (r *repoStub) Migrate(context.Context) error { return nil }
@@ -53,6 +54,20 @@ func (r *repoStub) SaveWireGuardServer(context.Context, storage.WireGuardServer)
 }
 func (r *repoStub) GetWireGuardServer(context.Context, string) (storage.WireGuardServer, bool, error) {
 	return storage.WireGuardServer{}, false, nil
+}
+func (r *repoStub) SetPendingOperation(_ context.Context, op storage.PendingOperation) error {
+	r.pending = &op
+	return nil
+}
+func (r *repoStub) GetPendingOperation(_ context.Context, telegramID int64) (storage.PendingOperation, bool, error) {
+	if r.pending == nil || r.pending.TelegramID != telegramID {
+		return storage.PendingOperation{}, false, nil
+	}
+	return *r.pending, true, nil
+}
+func (r *repoStub) ClearPendingOperation(context.Context, int64) error {
+	r.pending = nil
+	return nil
 }
 
 func TestMenuOnlyUsesRepositoryServices(t *testing.T) {
