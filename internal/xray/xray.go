@@ -9,9 +9,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/config"
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 type Manager struct {
@@ -84,6 +86,74 @@ func (m *Manager) Rename(ctx context.Context, id, name string) error {
 		return err
 	}
 	return m.Render(ctx)
+}
+
+func (m *Manager) SetTimer(ctx context.Context, id, expiresAt string) error {
+	client, err := m.client(ctx, id)
+	if err != nil {
+		return err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(client.ConfigJSON), &payload); err != nil {
+		return err
+	}
+	expiresAt = strings.TrimSpace(expiresAt)
+	if expiresAt == "" || expiresAt == "0" {
+		delete(payload, "time")
+	} else {
+		t, err := time.Parse("2006-01-02 15:04:05", expiresAt)
+		if err != nil {
+			return fmt.Errorf("time format must be YYYY-MM-DD HH:MM:SS")
+		}
+		payload["time"] = t.Unix()
+	}
+	body, _ := json.Marshal(payload)
+	client.ConfigJSON = string(body)
+	if err := m.repo.SaveClient(ctx, client); err != nil {
+		return err
+	}
+	return m.Render(ctx)
+}
+
+func (m *Manager) ResetUserStats(ctx context.Context, id string) error {
+	return m.repo.SetSetting(ctx, storage.Setting{Key: "xray.stats.reset." + id, ValueJSON: fmt.Sprintf("%q", time.Now().UTC().Format(time.RFC3339))})
+}
+
+func (m *Manager) Link(ctx context.Context, id string) (string, error) {
+	client, err := m.client(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(client.ConfigJSON), &payload); err != nil {
+		return "", err
+	}
+	uuid, _ := payload["id"].(string)
+	host := m.cfg.Domain
+	if host == "" {
+		host = m.cfg.PublicIP
+	}
+	if host == "" {
+		host = "example.com"
+	}
+	path := "/ws"
+	return fmt.Sprintf("vless://%s@%s:443?encryption=none&security=tls&type=ws&path=%s#%s", uuid, host, path, client.Name), nil
+}
+
+func (m *Manager) QR(ctx context.Context, id string) (string, []byte, error) {
+	link, err := m.Link(ctx, id)
+	if err != nil {
+		return "", nil, err
+	}
+	client, err := m.client(ctx, id)
+	if err != nil {
+		return "", nil, err
+	}
+	png, err := qrcode.Encode(link, qrcode.Medium, 512)
+	if err != nil {
+		return "", nil, err
+	}
+	return safeName(client.Name) + ".png", png, nil
 }
 
 func (m *Manager) Render(ctx context.Context) error {
@@ -165,4 +235,20 @@ func uuid() (string, error) {
 	b[6] = (b[6] & 0x0f) | 0x40
 	b[8] = (b[8] & 0x3f) | 0x80
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16]), nil
+}
+
+func safeName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "xray"
+	}
+	var b strings.Builder
+	for _, r := range name {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }

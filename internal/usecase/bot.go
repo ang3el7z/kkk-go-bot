@@ -188,6 +188,12 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 			result, err := b.xrayMenu(ctx)
 			return result, true, err
 		}
+	case "xray_timer":
+		err = b.xray.SetTimer(ctx, payload.ClientID, msg.Text)
+		if err == nil {
+			result, err := b.xrayMenu(ctx)
+			return result, true, err
+		}
 	default:
 		return MessageResult{Text: "Unknown pending operation"}, true, nil
 	}
@@ -238,6 +244,28 @@ func (b *Bot) handleXrayCallback(ctx context.Context, telegramID int64, data str
 			return CallbackResult{}, true, err
 		}
 		return CallbackResult{Text: "Send new Xray user name/email", ShowAlert: true}, true, nil
+	case "timer":
+		if err := b.setPendingOperation(ctx, telegramID, "xray_timer", value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send expiry as YYYY-MM-DD HH:MM:SS, or 0 to clear", ShowAlert: true}, true, nil
+	case "resetstats":
+		if err := b.xray.ResetUserStats(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Xray stats reset marker saved", ShowAlert: false}, true, nil
+	case "link":
+		link, err := b.xray.Link(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: link, ShowAlert: true}, true, nil
+	case "qr":
+		filename, png, err := b.xray.QR(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Photo: &telegram.Photo{Filename: filename, Content: png, Caption: "Xray QR"}}, true, nil
 	default:
 		return CallbackResult{Text: "Unknown Xray action", ShowAlert: true}, true, nil
 	}
@@ -391,7 +419,13 @@ func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
 		lines = append(lines, fmt.Sprintf("%s %s", status, client.Name))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "toggle " + client.Name, Data: "xray:toggle:" + client.ID},
+			{Text: "link", Data: "xray:link:" + client.ID},
+			{Text: "QR", Data: "xray:qr:" + client.ID},
+		})
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "rename", Data: "xray:rename:" + client.ID},
+			{Text: "timer", Data: "xray:timer:" + client.ID},
+			{Text: "reset stats", Data: "xray:resetstats:" + client.ID},
 			{Text: "delete", Data: "xray:delete:" + client.ID},
 		})
 	}

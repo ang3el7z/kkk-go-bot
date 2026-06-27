@@ -10,12 +10,12 @@
 - Main menu generated from service availability.
 - Compose profile `go-bot`.
 - WireGuard first parity slice: DB-backed clients/server config, key generation, add/delete/toggle, reply flows for rename/timer/DNS/MTU/AllowedIPs, Telegram config document upload, QR image upload, `wg0.conf`/`wg1.conf` rendering, optional reload via `WG_RELOAD=1`.
-- Xray first parity slice: import users from `xray.json`, DB-backed add/delete/toggle/rename, render active users back to `config/xray.json`, Telegram menu callbacks.
+- Xray first parity slice: import users from `xray.json`, DB-backed add/delete/toggle/rename/timer, VLESS link + QR, reset-stats marker, render active users back to `config/xray.json`, Telegram menu callbacks.
 
 ## Remaining For Full Parity
 
 - WireGuard remaining: subnet list editor, Amnezia toggles, richer status/traffic display.
-- Xray remaining: stats, routes, templates, HWID, subscriptions/QR/export links, transport switching, timer/reset flows.
+- Xray remaining: full stats ingestion/display, routes, templates, HWID, subscription web endpoints, transport switching, reset-user UUID flow.
 - PAC/routing list editors and remote list updates.
 - Service-specific handlers: AdGuard, MTProto, SS, OC, Naive, Hysteria, DNSTT, Warp.
 - Logs/IP moderation/updater/backup/import-export.
