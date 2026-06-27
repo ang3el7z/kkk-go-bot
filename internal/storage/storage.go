@@ -42,6 +42,12 @@ type Client struct {
 	UpdatedAt  time.Time
 }
 
+type WireGuardServer struct {
+	Instance   string
+	ConfigJSON string
+	UpdatedAt  time.Time
+}
+
 type Repository interface {
 	Migrate(ctx context.Context) error
 	Close() error
@@ -56,4 +62,7 @@ type Repository interface {
 	GetSetting(ctx context.Context, key string) (Setting, bool, error)
 	SaveClient(ctx context.Context, client Client) error
 	ListClients(ctx context.Context, protocol string) ([]Client, error)
+	DeleteClient(ctx context.Context, id string) error
+	SaveWireGuardServer(ctx context.Context, server WireGuardServer) error
+	GetWireGuardServer(ctx context.Context, instance string) (WireGuardServer, bool, error)
 }

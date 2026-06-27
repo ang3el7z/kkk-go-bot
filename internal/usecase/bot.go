@@ -7,14 +7,16 @@ import (
 
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
+	"github.com/ang3el7z/kkk-go-bot/internal/wireguard"
 )
 
 type Bot struct {
 	repo storage.Repository
+	wg   *wireguard.Manager
 }
 
-func NewBot(repo storage.Repository) *Bot {
-	return &Bot{repo: repo}
+func NewBot(repo storage.Repository, wg *wireguard.Manager) *Bot {
+	return &Bot{repo: repo, wg: wg}
 }
 
 type MessageResult struct {
@@ -25,6 +27,7 @@ type MessageResult struct {
 type CallbackResult struct {
 	Text      string
 	ShowAlert bool
+	Keyboard  *telegram.InlineKeyboard
 }
 
 func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageResult, error) {
@@ -37,6 +40,8 @@ func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageR
 	switch msg.Text {
 	case "/start", "/menu", "":
 		return b.menu(ctx)
+	case "/wg", "/wireguard":
+		return b.wgMenu(ctx, "wg")
 	default:
 		return MessageResult{Text: "Unknown command. Use /menu."}, nil
 	}
@@ -46,8 +51,27 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 	if err := b.requireAdminOrBootstrap(ctx, query.From); err != nil {
 		return CallbackResult{Text: "Unauthorized", ShowAlert: true}, nil
 	}
+	if result, ok, err := b.handleWireGuardCallback(ctx, query.Data); ok || err != nil {
+		return result, err
+	}
 	name, ok := strings.CutPrefix(query.Data, "service:")
 	if !ok {
+		if query.Data == "/menu wg" || strings.HasPrefix(query.Data, "/menu wg ") || query.Data == "/changeWG 0" {
+			msg, err := b.wgMenu(ctx, "wg")
+			return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
+		}
+		if query.Data == "/changeWG 1" {
+			msg, err := b.wgMenu(ctx, "wg1")
+			return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
+		}
+		if query.Data == "/add" {
+			_, _, err := b.wg.Add(ctx, "wg", "all", "0.0.0.0/0")
+			if err != nil {
+				return CallbackResult{}, err
+			}
+			msg, err := b.wgMenu(ctx, "wg")
+			return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
+		}
 		return CallbackResult{Text: "Route not migrated yet", ShowAlert: true}, nil
 	}
 	service, found, err := b.repo.Service(ctx, name)
@@ -62,6 +86,47 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 		return CallbackResult{Text: reason, ShowAlert: true}, nil
 	}
 	return CallbackResult{Text: service.DisplayName, ShowAlert: false}, nil
+}
+
+func (b *Bot) handleWireGuardCallback(ctx context.Context, data string) (CallbackResult, bool, error) {
+	if b.wg == nil || !strings.HasPrefix(data, "wg:") {
+		return CallbackResult{}, false, nil
+	}
+	parts := strings.SplitN(data, ":", 3)
+	if len(parts) < 3 {
+		return CallbackResult{Text: "Bad WireGuard action", ShowAlert: true}, true, nil
+	}
+	action := parts[1]
+	value := parts[2]
+	switch action {
+	case "add":
+		client, _, err := b.wg.Add(ctx, value, "all", "0.0.0.0/0")
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Created " + client.Name, ShowAlert: false}, true, nil
+	case "toggle":
+		if err := b.wg.Toggle(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "WireGuard client toggled", ShowAlert: false}, true, nil
+	case "delete":
+		if err := b.wg.Delete(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "WireGuard client deleted", ShowAlert: false}, true, nil
+	case "download":
+		_, conf, err := b.wg.ClientConfig(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		if len(conf) > 180 {
+			conf = conf[:180] + "..."
+		}
+		return CallbackResult{Text: conf, ShowAlert: true}, true, nil
+	default:
+		return CallbackResult{Text: "Unknown WireGuard action", ShowAlert: true}, true, nil
+	}
 }
 
 func (b *Bot) requireAdminOrBootstrap(ctx context.Context, user telegram.User) error {
@@ -96,12 +161,12 @@ func (b *Bot) menu(ctx context.Context) (MessageResult, error) {
 	for i := 0; i < len(services); i += 2 {
 		row := []telegram.InlineButton{{
 			Text: services[i].DisplayName,
-			Data: "service:" + services[i].Name,
+			Data: callbackForService(services[i].Name),
 		}}
 		if i+1 < len(services) {
 			row = append(row, telegram.InlineButton{
 				Text: services[i+1].DisplayName,
-				Data: "service:" + services[i+1].Name,
+				Data: callbackForService(services[i+1].Name),
 			})
 		}
 		keyboard.Rows = append(keyboard.Rows, row)
@@ -110,4 +175,43 @@ func (b *Bot) menu(ctx context.Context) (MessageResult, error) {
 		return MessageResult{Text: "No enabled services found in compose."}, nil
 	}
 	return MessageResult{Text: "kkk-go-bot menu", Keyboard: keyboard}, nil
+}
+
+func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error) {
+	clients, err := b.wg.List(ctx, instance)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{{
+		{Text: "Add peer", Data: "wg:add:" + instance},
+	}}}
+	var lines []string
+	for _, client := range clients {
+		status := "off"
+		if client.Enabled {
+			status = "on"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s", status, client.Name))
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+			{Text: "toggle " + client.Name, Data: "wg:toggle:" + client.ID},
+			{Text: "download", Data: "wg:download:" + client.ID},
+			{Text: "delete", Data: "wg:delete:" + client.ID},
+		})
+	}
+	text := "WireGuard " + instance
+	if len(lines) > 0 {
+		text += "\n\n" + strings.Join(lines, "\n")
+	}
+	return MessageResult{Text: text, Keyboard: keyboard}, nil
+}
+
+func callbackForService(name string) string {
+	switch name {
+	case "wg":
+		return "/menu wg"
+	case "wg1":
+		return "/changeWG 1"
+	default:
+		return "service:" + name
+	}
 }

@@ -4,8 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/ang3el7z/kkk-go-bot/internal/config"
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
+	"github.com/ang3el7z/kkk-go-bot/internal/wireguard"
 )
 
 type repoStub struct {
@@ -45,6 +47,13 @@ func (r *repoStub) SaveClient(context.Context, storage.Client) error { return ni
 func (r *repoStub) ListClients(context.Context, string) ([]storage.Client, error) {
 	return nil, nil
 }
+func (r *repoStub) DeleteClient(context.Context, string) error { return nil }
+func (r *repoStub) SaveWireGuardServer(context.Context, storage.WireGuardServer) error {
+	return nil
+}
+func (r *repoStub) GetWireGuardServer(context.Context, string) (storage.WireGuardServer, bool, error) {
+	return storage.WireGuardServer{}, false, nil
+}
 
 func TestMenuOnlyUsesRepositoryServices(t *testing.T) {
 	repo := &repoStub{
@@ -54,7 +63,7 @@ func TestMenuOnlyUsesRepositoryServices(t *testing.T) {
 			{Name: "xr", DisplayName: "Xray"},
 		},
 	}
-	result, err := NewBot(repo).HandleMessage(context.Background(), telegram.Message{
+	result, err := NewBot(repo, wireguard.NewManager(config.Config{}, repo)).HandleMessage(context.Background(), telegram.Message{
 		From: telegram.User{ID: 1},
 		Chat: telegram.Chat{ID: 10},
 		Text: "/menu",

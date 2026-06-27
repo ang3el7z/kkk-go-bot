@@ -38,6 +38,13 @@ func (m *memoryRepo) SaveClient(context.Context, storage.Client) error { return 
 func (m *memoryRepo) ListClients(context.Context, string) ([]storage.Client, error) {
 	return nil, nil
 }
+func (m *memoryRepo) DeleteClient(context.Context, string) error { return nil }
+func (m *memoryRepo) SaveWireGuardServer(context.Context, storage.WireGuardServer) error {
+	return nil
+}
+func (m *memoryRepo) GetWireGuardServer(context.Context, string) (storage.WireGuardServer, bool, error) {
+	return storage.WireGuardServer{}, false, nil
+}
 
 type fakeCompose map[string]bool
 

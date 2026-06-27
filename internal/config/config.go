@@ -20,6 +20,12 @@ type Config struct {
 	LegacyPHPPath string
 	PublicIP      string
 	ProjectName   string
+	WGAddress     string
+	WG1Address    string
+	WGPort        string
+	WG1Port       string
+	Domain        string
+	ReloadWG      bool
 }
 
 func Load(envFile string) (Config, error) {
@@ -40,6 +46,12 @@ func Load(envFile string) (Config, error) {
 		LegacyPHPPath: getenv("LEGACY_PHP_CONFIG", filepath.Join("app", "config.php")),
 		PublicIP:      getenv("PUBLIC_IP", getenv("IP", firstNonLoopbackIP())),
 		ProjectName:   getenv("PROJECT_NAME", "kkk-go-bot"),
+		WGAddress:     getenv("WGADDRESS", "10.0.1.1/24"),
+		WG1Address:    getenv("WG1ADDRESS", "10.0.3.1/24"),
+		WGPort:        getenv("WGPORT", "51820"),
+		WG1Port:       getenv("WG1PORT", "51821"),
+		Domain:        os.Getenv("DOMAIN"),
+		ReloadWG:      os.Getenv("WG_RELOAD") == "1",
 	}
 
 	if cfg.HTTPAddr == "" {

@@ -77,6 +77,11 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(protocol, name)
 		)`,
+		`CREATE TABLE IF NOT EXISTS wireguard_servers (
+			instance TEXT PRIMARY KEY,
+			config_json TEXT NOT NULL DEFAULT '{}',
+			updated_at TEXT NOT NULL
+		)`,
 		`CREATE TABLE IF NOT EXISTS pending_operations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			telegram_id INTEGER NOT NULL,
@@ -266,6 +271,40 @@ func (s *SQLite) ListClients(ctx context.Context, protocol string) ([]Client, er
 		clients = append(clients, client)
 	}
 	return clients, rows.Err()
+}
+
+func (s *SQLite) DeleteClient(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM clients WHERE id = ?`, id)
+	return err
+}
+
+func (s *SQLite) SaveWireGuardServer(ctx context.Context, server WireGuardServer) error {
+	if server.UpdatedAt.IsZero() {
+		server.UpdatedAt = time.Now().UTC()
+	}
+	if server.ConfigJSON == "" {
+		server.ConfigJSON = "{}"
+	}
+	_, err := s.db.ExecContext(ctx, `
+INSERT INTO wireguard_servers (instance, config_json, updated_at)
+VALUES (?, ?, ?)
+ON CONFLICT(instance) DO UPDATE SET config_json = excluded.config_json, updated_at = excluded.updated_at`,
+		server.Instance, server.ConfigJSON, timeString(server.UpdatedAt))
+	return err
+}
+
+func (s *SQLite) GetWireGuardServer(ctx context.Context, instance string) (WireGuardServer, bool, error) {
+	var server WireGuardServer
+	var updated string
+	err := s.db.QueryRowContext(ctx, `SELECT instance, config_json, updated_at FROM wireguard_servers WHERE instance = ?`, instance).Scan(&server.Instance, &server.ConfigJSON, &updated)
+	if errors.Is(err, sql.ErrNoRows) {
+		return WireGuardServer{}, false, nil
+	}
+	if err != nil {
+		return WireGuardServer{}, false, err
+	}
+	server.UpdatedAt, _ = parseTime(updated)
+	return server, true, nil
 }
 
 type scanner interface{ Scan(dest ...any) error }

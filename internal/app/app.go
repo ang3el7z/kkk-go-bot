@@ -16,6 +16,7 @@ import (
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
 	"github.com/ang3el7z/kkk-go-bot/internal/usecase"
+	"github.com/ang3el7z/kkk-go-bot/internal/wireguard"
 )
 
 type Options struct {
@@ -52,7 +53,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 		return err
 	}
 
-	bot := usecase.NewBot(repo)
+	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo))
 	client := telegram.NewAPIClient(cfg.TelegramToken)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -111,6 +112,12 @@ func handleUpdate(ctx context.Context, bot *usecase.Bot, client telegram.Client,
 		result, err := bot.HandleCallback(ctx, *update.CallbackQuery)
 		if err != nil {
 			return err
+		}
+		if result.Keyboard != nil && update.CallbackQuery.Message != nil {
+			if err := client.SendMessage(update.CallbackQuery.Message.Chat.ID, result.Text, result.Keyboard); err != nil {
+				return err
+			}
+			return client.AnswerCallbackQuery(update.CallbackQuery.ID, "", false)
 		}
 		return client.AnswerCallbackQuery(update.CallbackQuery.ID, result.Text, result.ShowAlert)
 	default:

@@ -35,10 +35,35 @@ func (i *Importer) Import(ctx context.Context) error {
 	if err := i.importClients(ctx, "wg1", filepath.Join(i.cfg.ConfigDir, "clients1.json")); err != nil {
 		return err
 	}
+	if err := i.importWGConfig(ctx, "wg", filepath.Join(i.cfg.ConfigDir, "wg0.conf")); err != nil {
+		return err
+	}
+	if err := i.importWGConfig(ctx, "wg1", filepath.Join(i.cfg.ConfigDir, "wg1.conf")); err != nil {
+		return err
+	}
 	if err := i.importJSONSetting(ctx, "hwid", filepath.Join(i.cfg.ConfigDir, "hwid.json")); err != nil {
 		return err
 	}
 	return nil
+}
+
+func (i *Importer) importWGConfig(ctx context.Context, instance, path string) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	parsed := parseWGConfig(string(data))
+	if len(parsed) == 0 {
+		return nil
+	}
+	body, err := json.Marshal(parsed)
+	if err != nil {
+		return err
+	}
+	return i.repo.SaveWireGuardServer(ctx, storage.WireGuardServer{Instance: instance, ConfigJSON: string(body)})
 }
 
 func (i *Importer) importPHPConfig(ctx context.Context) error {
@@ -164,4 +189,47 @@ func redactPHPConfig(text string) string {
 func mustJSON(value string) string {
 	data, _ := json.Marshal(value)
 	return string(data)
+}
+
+func parseWGConfig(text string) map[string]any {
+	result := map[string]any{}
+	var peers []map[string]string
+	current := map[string]string{}
+	section := ""
+	flush := func() {
+		if section == "Peer" && len(current) > 0 {
+			peers = append(peers, current)
+		}
+		current = map[string]string{}
+	}
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			flush()
+			section = strings.Trim(line, "[]")
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.TrimSpace(value)
+		if section == "Interface" {
+			if _, ok := result["interface"]; !ok {
+				result["interface"] = map[string]string{}
+			}
+			result["interface"].(map[string]string)[key] = value
+		} else if section == "Peer" {
+			current[key] = value
+		}
+	}
+	flush()
+	if len(peers) > 0 {
+		result["peers"] = peers
+	}
+	return result
 }
