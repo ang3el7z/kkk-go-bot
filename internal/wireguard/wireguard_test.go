@@ -2,6 +2,8 @@ package wireguard
 
 import (
 	"context"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/config"
@@ -19,6 +21,9 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	if err := repo.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(dir+"/pac.json", []byte(`{}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	manager := NewManager(config.Config{
 		ConfigDir: dir,
 		WGAddress: "10.9.0.1/24",
@@ -27,6 +32,25 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	}, repo)
 	if err := manager.SetDefaultAllowedIPs(ctx, "wg", "10.0.0.0/8"); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := manager.ToggleEndpoint(ctx, "wg"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ToggleBlockTorrent(ctx, "wg"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ToggleBlockExchange(ctx, "wg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AddSubnet(ctx, "wg", "172.16.0.0/12"); err != nil {
+		t.Fatal(err)
+	}
+	pac, err := os.ReadFile(dir + "/pac.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(pac), "blocktorrent") || !strings.Contains(string(pac), "exchange") {
+		t.Fatalf("pac flags missing: %s", pac)
 	}
 	client, conf, err := manager.Add(ctx, "wg", "test", "0.0.0.0/0")
 	if err != nil {
@@ -61,8 +85,11 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.Amnezia || info.DefaultAllowedIPs != "10.0.0.0/8" || len(info.Clients) != 1 || info.Clients[0].Address == "" {
+	if !info.Amnezia || !info.EndpointUseIP || !info.BlockTorrent || !info.BlockExchange || info.DefaultAllowedIPs != "10.0.0.0/8" || len(info.Subnets) != 1 || len(info.Clients) != 1 || info.Clients[0].Address == "" {
 		t.Fatalf("bad info: %+v", info)
+	}
+	if err := manager.DeleteSubnet(ctx, "wg", "172.16.0.0/12"); err != nil {
+		t.Fatal(err)
 	}
 	_, png, err := manager.ClientQR(ctx, client.ID)
 	if err != nil {

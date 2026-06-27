@@ -152,6 +152,44 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, dat
 		}
 		msg.Text = fmt.Sprintf("Amnezia: %t\n\n%s", enabled, msg.Text)
 		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, nil
+	case "endpoint":
+		enabled, err := b.wg.ToggleEndpoint(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg.Text = fmt.Sprintf("Endpoint IP: %t\n\n%s", enabled, msg.Text)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, nil
+	case "torrent":
+		enabled, err := b.wg.ToggleBlockTorrent(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: fmt.Sprintf("Torrent block: %t", enabled), ShowAlert: false}, true, nil
+	case "exchange":
+		enabled, err := b.wg.ToggleBlockExchange(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: fmt.Sprintf("Exchange block: %t", enabled), ShowAlert: false}, true, nil
+	case "subnetadd":
+		if err := b.setPending(ctx, telegramID, action, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send subnet CIDR, e.g. 10.0.0.0/8", ShowAlert: true}, true, nil
+	case "subnetdel":
+		instance, subnet, ok := strings.Cut(value, ":")
+		if !ok {
+			return CallbackResult{Text: "Bad subnet delete action", ShowAlert: true}, true, nil
+		}
+		if err := b.wg.DeleteSubnet(ctx, instance, subnet); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, instance)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
 	case "defaultallowedips":
 		if err := b.setPending(ctx, telegramID, action, value); err != nil {
 			return CallbackResult{}, true, err
@@ -194,6 +232,8 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 		err = b.wg.SetAllowedIPs(ctx, payload.ClientID, msg.Text)
 	case "wg_defaultallowedips":
 		err = b.wg.SetDefaultAllowedIPs(ctx, payload.ClientID, msg.Text)
+	case "wg_subnetadd":
+		err = b.wg.AddSubnet(ctx, payload.ClientID, msg.Text)
 	case "xray_add":
 		_, err = b.xray.Add(ctx, msg.Text)
 		if err == nil {
@@ -364,7 +404,24 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 		{Text: fmt.Sprintf("Amnezia: %t", info.Amnezia), Data: "wg:amnezia:" + instance},
 		{Text: "Default AllowedIPs", Data: "wg:defaultallowedips:" + instance},
 	}}}
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: fmt.Sprintf("Endpoint IP: %t", info.EndpointUseIP), Data: "wg:endpoint:" + instance},
+		{Text: fmt.Sprintf("Torrent: %t", info.BlockTorrent), Data: "wg:torrent:" + instance},
+		{Text: fmt.Sprintf("Exchange: %t", info.BlockExchange), Data: "wg:exchange:" + instance},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: "Add subnet", Data: "wg:subnetadd:" + instance},
+	})
 	lines := []string{"default allow=" + info.DefaultAllowedIPs}
+	if len(info.Subnets) > 0 {
+		lines = append(lines, "subnets="+strings.Join(info.Subnets, ","))
+		for _, subnet := range info.Subnets {
+			keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{
+				Text: "delete " + subnet,
+				Data: "wg:subnetdel:" + instance + ":" + subnet,
+			}})
+		}
+	}
 	for _, client := range info.Clients {
 		status := "off"
 		if client.Enabled {

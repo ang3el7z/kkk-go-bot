@@ -33,7 +33,11 @@ type Config struct {
 type Info struct {
 	Instance          string
 	Amnezia           bool
+	EndpointUseIP     bool
+	BlockTorrent      bool
+	BlockExchange     bool
 	DefaultAllowedIPs string
+	Subnets           []string
 	Clients           []ClientInfo
 }
 
@@ -77,11 +81,35 @@ func (m *Manager) Info(ctx context.Context, instance string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
+	endpointUseIP, err := m.boolSetting(ctx, endpointSettingKey(instance))
+	if err != nil {
+		return Info{}, err
+	}
+	blockTorrent, err := m.boolSetting(ctx, blockTorrentSettingKey(instance))
+	if err != nil {
+		return Info{}, err
+	}
+	blockExchange, err := m.boolSetting(ctx, blockExchangeSettingKey(instance))
+	if err != nil {
+		return Info{}, err
+	}
 	defaultAllowedIPs, err := m.DefaultAllowedIPs(ctx, instance)
 	if err != nil {
 		return Info{}, err
 	}
-	info := Info{Instance: instance, Amnezia: amnezia, DefaultAllowedIPs: defaultAllowedIPs}
+	subnets, err := m.Subnets(ctx, instance)
+	if err != nil {
+		return Info{}, err
+	}
+	info := Info{
+		Instance:          instance,
+		Amnezia:           amnezia,
+		EndpointUseIP:     endpointUseIP,
+		BlockTorrent:      blockTorrent,
+		BlockExchange:     blockExchange,
+		DefaultAllowedIPs: defaultAllowedIPs,
+		Subnets:           subnets,
+	}
 	statuses, _ := dockerWGStatus(ctx, instance)
 	for _, client := range clients {
 		cfg, err := decodeConfig(client.ConfigJSON)
@@ -416,6 +444,80 @@ func (m *Manager) SetDefaultAllowedIPs(ctx context.Context, instance, allowedIPs
 	return m.repo.SetSetting(ctx, storage.Setting{Key: defaultAllowedIPsSettingKey(instance), ValueJSON: string(body)})
 }
 
+func (m *Manager) ToggleEndpoint(ctx context.Context, instance string) (bool, error) {
+	enabled, err := m.toggleBoolSetting(ctx, endpointSettingKey(instance))
+	if err != nil {
+		return false, err
+	}
+	if err := m.setPacBool(instance, "endpoint", enabled); err != nil {
+		return false, err
+	}
+	return enabled, m.refreshClientEndpoints(ctx, instance)
+}
+
+func (m *Manager) ToggleBlockTorrent(ctx context.Context, instance string) (bool, error) {
+	enabled, err := m.toggleBoolSetting(ctx, blockTorrentSettingKey(instance))
+	if err != nil {
+		return false, err
+	}
+	return enabled, m.setPacBool(instance, "blocktorrent", enabled)
+}
+
+func (m *Manager) ToggleBlockExchange(ctx context.Context, instance string) (bool, error) {
+	enabled, err := m.toggleBoolSetting(ctx, blockExchangeSettingKey(instance))
+	if err != nil {
+		return false, err
+	}
+	return enabled, m.setPacBool(instance, "exchange", enabled)
+}
+
+func (m *Manager) Subnets(ctx context.Context, instance string) ([]string, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, subnetsSettingKey(instance))
+	if err != nil || !ok {
+		return nil, err
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(setting.ValueJSON), &values); err != nil {
+		return nil, nil
+	}
+	return values, nil
+}
+
+func (m *Manager) AddSubnet(ctx context.Context, instance, subnet string) error {
+	subnet = strings.TrimSpace(subnet)
+	if subnet == "" {
+		return errors.New("subnet is empty")
+	}
+	if _, err := netip.ParsePrefix(subnet); err != nil {
+		return err
+	}
+	values, err := m.Subnets(ctx, instance)
+	if err != nil {
+		return err
+	}
+	for _, value := range values {
+		if value == subnet {
+			return nil
+		}
+	}
+	values = append(values, subnet)
+	return m.saveSubnets(ctx, instance, values)
+}
+
+func (m *Manager) DeleteSubnet(ctx context.Context, instance, subnet string) error {
+	values, err := m.Subnets(ctx, instance)
+	if err != nil {
+		return err
+	}
+	out := values[:0]
+	for _, value := range values {
+		if value != subnet {
+			out = append(out, value)
+		}
+	}
+	return m.saveSubnets(ctx, instance, out)
+}
+
 func (m *Manager) ToggleAmnezia(ctx context.Context, instance string) (bool, error) {
 	enabled, err := m.amneziaEnabled(ctx, instance)
 	if err != nil {
@@ -423,6 +525,9 @@ func (m *Manager) ToggleAmnezia(ctx context.Context, instance string) (bool, err
 	}
 	enabled = !enabled
 	if err := m.repo.SetSetting(ctx, storage.Setting{Key: amneziaSettingKey(instance), ValueJSON: fmt.Sprintf("%t", enabled)}); err != nil {
+		return false, err
+	}
+	if err := m.setPacBool(instance, "amnezia", enabled); err != nil {
 		return false, err
 	}
 	if err := m.applyAmnezia(ctx, instance, enabled); err != nil {
@@ -642,7 +747,8 @@ func (m *Manager) clientByID(ctx context.Context, instance, id string) (storage.
 
 func (m *Manager) endpoint(instance string) string {
 	host := m.cfg.Domain
-	if host == "" {
+	useIP, _ := m.boolSetting(context.Background(), endpointSettingKey(instance))
+	if host == "" || useIP {
 		host = m.cfg.PublicIP
 	}
 	port := m.cfg.WGPort
@@ -650,6 +756,83 @@ func (m *Manager) endpoint(instance string) string {
 		port = m.cfg.WG1Port
 	}
 	return host + ":" + port
+}
+
+func (m *Manager) refreshClientEndpoints(ctx context.Context, instance string) error {
+	clients, err := m.repo.ListClients(ctx, instance)
+	if err != nil {
+		return err
+	}
+	endpoint := m.endpoint(instance)
+	for _, client := range clients {
+		cfg, err := decodeConfig(client.ConfigJSON)
+		if err != nil {
+			return err
+		}
+		for idx := range cfg.Peers {
+			cfg.Peers[idx]["Endpoint"] = endpoint
+		}
+		body, err := json.Marshal(cfg)
+		if err != nil {
+			return err
+		}
+		client.ConfigJSON = string(body)
+		if err := m.repo.SaveClient(ctx, client); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Manager) boolSetting(ctx context.Context, key string) (bool, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, key)
+	if err != nil || !ok {
+		return false, err
+	}
+	return setting.ValueJSON == "true", nil
+}
+
+func (m *Manager) toggleBoolSetting(ctx context.Context, key string) (bool, error) {
+	enabled, err := m.boolSetting(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	enabled = !enabled
+	return enabled, m.repo.SetSetting(ctx, storage.Setting{Key: key, ValueJSON: fmt.Sprintf("%t", enabled)})
+}
+
+func (m *Manager) saveSubnets(ctx context.Context, instance string, values []string) error {
+	sort.Strings(values)
+	body, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	return m.repo.SetSetting(ctx, storage.Setting{Key: subnetsSettingKey(instance), ValueJSON: string(body)})
+}
+
+func (m *Manager) setPacBool(instance, key string, value bool) error {
+	path := filepath.Join(m.cfg.ConfigDir, "pac.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	pac := map[string]any{}
+	if len(data) > 0 {
+		_ = json.Unmarshal(data, &pac)
+	}
+	pacKey := key
+	if instance == "wg1" {
+		pacKey = "wg1_" + key
+	}
+	pac[pacKey] = value
+	body, err := json.MarshalIndent(pac, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
 }
 
 func decodeConfig(raw string) (Config, error) {
@@ -813,6 +996,22 @@ func amneziaSettingKey(instance string) string {
 
 func defaultAllowedIPsSettingKey(instance string) string {
 	return "wireguard." + instance + ".default_allowed_ips"
+}
+
+func endpointSettingKey(instance string) string {
+	return "wireguard." + instance + ".endpoint_ip"
+}
+
+func blockTorrentSettingKey(instance string) string {
+	return "wireguard." + instance + ".block_torrent"
+}
+
+func blockExchangeSettingKey(instance string) string {
+	return "wireguard." + instance + ".block_exchange"
+}
+
+func subnetsSettingKey(instance string) string {
+	return "wireguard." + instance + ".subnets"
 }
 
 func publicKey(private string) (string, error) {
