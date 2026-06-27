@@ -9,11 +9,11 @@
 - Admin bootstrap and `/id`.
 - Main menu generated from service availability.
 - Compose profile `go-bot`.
-- WireGuard first parity slice: DB-backed clients/server config, key generation, add/delete/toggle, reply flows for rename/timer/DNS/MTU/AllowedIPs, Telegram config document upload, `wg0.conf`/`wg1.conf` rendering, optional reload via `WG_RELOAD=1`.
+- WireGuard first parity slice: DB-backed clients/server config, key generation, add/delete/toggle, reply flows for rename/timer/DNS/MTU/AllowedIPs, Telegram config document upload, QR image upload, `wg0.conf`/`wg1.conf` rendering, optional reload via `WG_RELOAD=1`.
 
 ## Remaining For Full Parity
 
-- WireGuard remaining: subnet list editor, QR image upload, Amnezia toggles, richer status/traffic display.
+- WireGuard remaining: subnet list editor, Amnezia toggles, richer status/traffic display.
 - Xray use cases: users, stats, routes, templates, HWID.
 - PAC/routing list editors and remote list updates.
 - Service-specific handlers: AdGuard, MTProto, SS, OC, Naive, Hysteria, DNSTT, Warp.

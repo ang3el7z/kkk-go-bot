@@ -18,6 +18,7 @@ import (
 
 	"github.com/ang3el7z/kkk-go-bot/internal/config"
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 type Config struct {
@@ -286,6 +287,18 @@ func (m *Manager) ClientConfig(ctx context.Context, id string) (string, string, 
 		return "", "", err
 	}
 	return safeName(client.Name) + ".conf", Render(cfg), nil
+}
+
+func (m *Manager) ClientQR(ctx context.Context, id string) (string, []byte, error) {
+	filename, conf, err := m.ClientConfig(ctx, id)
+	if err != nil {
+		return "", nil, err
+	}
+	png, err := qrcode.Encode(conf, qrcode.Medium, 512)
+	if err != nil {
+		return "", nil, err
+	}
+	return strings.TrimSuffix(filename, ".conf") + ".png", png, nil
 }
 
 func (m *Manager) saveClientConfigAndRebuild(ctx context.Context, instance string, client storage.Client, cfg Config) error {

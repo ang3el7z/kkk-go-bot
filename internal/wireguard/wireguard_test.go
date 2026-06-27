@@ -47,6 +47,13 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	if err := manager.SetAllowedIPs(ctx, client.ID, "10.0.0.0/8"); err != nil {
 		t.Fatal(err)
 	}
+	_, png, err := manager.ClientQR(ctx, client.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(png) == 0 {
+		t.Fatal("empty QR")
+	}
 	clients, err := manager.List(ctx, "wg")
 	if err != nil {
 		t.Fatal(err)

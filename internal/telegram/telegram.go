@@ -57,9 +57,16 @@ type Document struct {
 	Content  []byte
 }
 
+type Photo struct {
+	Filename string
+	Content  []byte
+	Caption  string
+}
+
 type Client interface {
 	SendMessage(chatID int64, text string, keyboard *InlineKeyboard) error
 	SendDocument(chatID int64, filename string, content []byte) error
+	SendPhoto(chatID int64, photo Photo) error
 	AnswerCallbackQuery(callbackID, text string, showAlert bool) error
 }
 
@@ -98,10 +105,21 @@ func (c *APIClient) AnswerCallbackQuery(callbackID, text string, showAlert bool)
 }
 
 func (c *APIClient) SendDocument(chatID int64, filename string, content []byte) error {
+	return c.sendMultipartFile("sendDocument", chatID, "document", filename, content, "")
+}
+
+func (c *APIClient) SendPhoto(chatID int64, photo Photo) error {
+	return c.sendMultipartFile("sendPhoto", chatID, "photo", photo.Filename, photo.Content, photo.Caption)
+}
+
+func (c *APIClient) sendMultipartFile(method string, chatID int64, field, filename string, content []byte, caption string) error {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	_ = writer.WriteField("chat_id", strconv.FormatInt(chatID, 10))
-	part, err := writer.CreateFormFile("document", filename)
+	if caption != "" {
+		_ = writer.WriteField("caption", caption)
+	}
+	part, err := writer.CreateFormFile(field, filename)
 	if err != nil {
 		return err
 	}
@@ -111,7 +129,7 @@ func (c *APIClient) SendDocument(chatID int64, filename string, content []byte) 
 	if err := writer.Close(); err != nil {
 		return err
 	}
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendDocument", c.token)
+	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", c.token, method)
 	req, err := http.NewRequest(http.MethodPost, url, &body)
 	if err != nil {
 		return err
@@ -123,7 +141,7 @@ func (c *APIClient) SendDocument(chatID int64, filename string, content []byte) 
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		return fmt.Errorf("telegram sendDocument failed: %s", res.Status)
+		return fmt.Errorf("telegram %s failed: %s", method, res.Status)
 	}
 	return nil
 }

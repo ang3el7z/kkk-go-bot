@@ -31,6 +31,7 @@ type CallbackResult struct {
 	ShowAlert bool
 	Keyboard  *telegram.InlineKeyboard
 	Document  *telegram.Document
+	Photo     *telegram.Photo
 }
 
 func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageResult, error) {
@@ -127,6 +128,12 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, dat
 			return CallbackResult{}, true, err
 		}
 		return CallbackResult{Document: &telegram.Document{Filename: filename, Content: []byte(conf)}}, true, nil
+	case "qr":
+		filename, png, err := b.wg.ClientQR(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Photo: &telegram.Photo{Filename: filename, Content: png, Caption: "WireGuard QR"}}, true, nil
 	case "rename", "timer", "dns", "mtu", "allowedips":
 		if err := b.setPending(ctx, telegramID, action, value); err != nil {
 			return CallbackResult{}, true, err
@@ -251,6 +258,7 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 		lines = append(lines, fmt.Sprintf("%s %s", status, client.Name))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "toggle " + client.Name, Data: "wg:toggle:" + client.ID},
+			{Text: "QR", Data: "wg:qr:" + client.ID},
 			{Text: "download", Data: "wg:download:" + client.ID},
 			{Text: "delete", Data: "wg:delete:" + client.ID},
 		})

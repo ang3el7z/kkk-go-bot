@@ -125,6 +125,12 @@ func handleUpdate(ctx context.Context, bot *usecase.Bot, client telegram.Client,
 			}
 			return client.AnswerCallbackQuery(update.CallbackQuery.ID, "sent", false)
 		}
+		if result.Photo != nil && update.CallbackQuery.Message != nil {
+			if err := client.SendPhoto(update.CallbackQuery.Message.Chat.ID, *result.Photo); err != nil {
+				return err
+			}
+			return client.AnswerCallbackQuery(update.CallbackQuery.ID, "sent", false)
+		}
 		return client.AnswerCallbackQuery(update.CallbackQuery.ID, result.Text, result.ShowAlert)
 	default:
 		return nil
