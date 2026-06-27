@@ -47,6 +47,20 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	if err := manager.SetAllowedIPs(ctx, client.ID, "10.0.0.0/8"); err != nil {
 		t.Fatal(err)
 	}
+	enabled, err := manager.ToggleAmnezia(ctx, "wg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Fatal("amnezia should be enabled")
+	}
+	info, err := manager.Info(ctx, "wg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.Amnezia || len(info.Clients) != 1 || info.Clients[0].Address == "" {
+		t.Fatalf("bad info: %+v", info)
+	}
 	_, png, err := manager.ClientQR(ctx, client.ID)
 	if err != nil {
 		t.Fatal(err)

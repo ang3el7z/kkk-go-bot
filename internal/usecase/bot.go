@@ -141,6 +141,17 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, dat
 			return CallbackResult{}, true, err
 		}
 		return CallbackResult{Photo: &telegram.Photo{Filename: filename, Content: png, Caption: "WireGuard QR"}}, true, nil
+	case "amnezia":
+		enabled, err := b.wg.ToggleAmnezia(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, value)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg.Text = fmt.Sprintf("Amnezia: %t\n\n%s", enabled, msg.Text)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, nil
 	case "rename", "timer", "dns", "mtu", "allowedips":
 		if err := b.setPending(ctx, telegramID, action, value); err != nil {
 			return CallbackResult{}, true, err
@@ -337,20 +348,34 @@ func (b *Bot) menu(ctx context.Context) (MessageResult, error) {
 }
 
 func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error) {
-	clients, err := b.wg.List(ctx, instance)
+	info, err := b.wg.Info(ctx, instance)
 	if err != nil {
 		return MessageResult{}, err
 	}
 	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{{
 		{Text: "Add peer", Data: "wg:add:" + instance},
+		{Text: fmt.Sprintf("Amnezia: %t", info.Amnezia), Data: "wg:amnezia:" + instance},
 	}}}
 	var lines []string
-	for _, client := range clients {
+	for _, client := range info.Clients {
 		status := "off"
 		if client.Enabled {
 			status = "on"
 		}
-		lines = append(lines, fmt.Sprintf("%s %s", status, client.Name))
+		details := []string{client.Address}
+		if client.AllowedIPs != "" {
+			details = append(details, "allow="+client.AllowedIPs)
+		}
+		if client.DNS != "" {
+			details = append(details, "dns="+client.DNS)
+		}
+		if client.MTU != "" {
+			details = append(details, "mtu="+client.MTU)
+		}
+		if client.ExpiresAt != "" {
+			details = append(details, "until="+client.ExpiresAt)
+		}
+		lines = append(lines, fmt.Sprintf("%s %s %s", status, client.Name, strings.Join(details, " ")))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "toggle " + client.Name, Data: "wg:toggle:" + client.ID},
 			{Text: "QR", Data: "wg:qr:" + client.ID},
