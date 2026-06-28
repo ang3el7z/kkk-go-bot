@@ -1,10 +1,21 @@
 b:
 	docker compose build
+init:
+	touch ./override.env ./docker-compose.override.yml ./config/location.conf ./config/override.conf ./config/hwid.json ./config/wg0.conf ./config/wg1.conf
 u: # запуск контейнеров
 	$(eval IP := $(shell hostname -I | awk '{print $$1}'))
 	bash ./update/update.sh &
-	touch ./override.env ./docker-compose.override.yml ./config/location.conf ./config/override.conf ./config/hwid.json ./config/wg0.conf ./config/wg1.conf
+	make init
 	IP=$(IP) VER=$(shell git describe --tags) docker compose --env-file ./.env --env-file ./override.env up -d --force-recreate
+go: # запуск Go runtime рядом с PHP через compose profile go-bot
+	make init
+	COMPOSE_PROFILES=go-bot IP=$${IP:-$$(hostname -I | awk '{print $$1}')} VER=$${VER:-$$(git describe --tags 2>/dev/null || echo dev)} docker compose --env-file ./.env --env-file ./override.env up -d --force-recreate bot
+go-down: # остановка только Go runtime
+	COMPOSE_PROFILES=go-bot docker compose stop bot
+go-logs: # логи Go runtime
+	COMPOSE_PROFILES=go-bot docker compose logs -f bot
+go-shell: # shell Go контейнера
+	COMPOSE_PROFILES=go-bot docker compose exec bot /bin/sh
 d: # остановка контейнеров
 	-kill -9 $(shell cat ./update/update_pid) > /dev/null
 	docker compose down --remove-orphans

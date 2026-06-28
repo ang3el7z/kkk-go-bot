@@ -21,6 +21,23 @@ make u
 make r
 ```
 
+## Optional Go runtime
+
+PHP remains the default runtime. To run the Go bot side-by-side, put the token in `.env`:
+
+```sh
+TELEGRAM_BOT_TOKEN=YOUR_TELEGRAM_BOT_KEY
+```
+
+Start/stop only the Go container:
+
+```sh
+make go
+make go-down
+```
+
+Go listens on `127.0.0.1:8082` and uses compose profile `go-bot`. Rollback is `make go-down`; PHP containers stay unchanged.
+
 ## Autostart
 
 ```sh
@@ -32,4 +49,3 @@ Add:
 ```sh
 @reboot cd /root/kkk-go-bot && make r
 ```
-
