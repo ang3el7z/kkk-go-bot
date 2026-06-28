@@ -13,6 +13,7 @@
 - Telegram adapter: update models, message/callback dispatch, HTML messages, inline keyboards, document/photo uploads, callback answers, and API error validation.
 - Admin bootstrap and `/id`.
 - Main menu generated from service availability.
+- Feature flags/service availability: compose + Docker service registry controls visible menu entries and blocks direct callbacks/messages for unavailable WG/Xray services.
 - Compose profile `go-bot`.
 - Go runtime contract: `bot` compose profile with SQLite data volume, writable config volume for renderers, read-only Docker socket for probes/exec, legacy PHP config import mount, sing-box Windows assets mount, and HTTP healthcheck.
 - WireGuard parity slice: DB-backed clients/server config, key generation, add/delete/toggle, reply flows for rename/timer/DNS/MTU/AllowedIPs/default AllowedIPs, Telegram config document upload, QR image upload, Amnezia toggle/key material, endpoint switch, torrent/exchange flags synced to `pac.json`, subnet list UI, live traffic/handshake display via Docker exec, richer menu status, `wg0.conf`/`wg1.conf` rendering, optional reload via `WG_RELOAD=1`.
@@ -33,7 +34,7 @@
 - GO-003 Go skeleton implemented.
 - GO-004 Telegram adapter implemented.
 - GO-006 SQLite migrations implemented.
-- GO-008 is partially implemented by this integration.
+- GO-008 Service availability and feature flags implemented.
 - GO-005 Legacy config bridge implemented.
 - GO-007 legacy state import implemented.
 - GO-010 WireGuard parity implemented in Go. Runtime validation on Linux host still required.

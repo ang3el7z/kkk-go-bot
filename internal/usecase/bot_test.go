@@ -91,3 +91,48 @@ func TestMenuOnlyUsesRepositoryServices(t *testing.T) {
 		t.Fatalf("unexpected keyboard: %+v", result.Keyboard)
 	}
 }
+
+func TestUnavailableServiceBlocksDirectCallbacks(t *testing.T) {
+	repo := &repoStub{
+		admins: map[int64]bool{1: true},
+		services: []storage.Service{
+			{Name: "wg", DisplayName: "WireGuard 0", Enabled: true, Available: false, AvailabilityReason: "container not running"},
+			{Name: "xr", DisplayName: "Xray", Enabled: false, Available: false, AvailabilityReason: "service disabled in compose"},
+		},
+	}
+	bot := NewBot(repo, wireguard.NewManager(config.Config{}, repo), xray.NewManager(config.Config{}, repo))
+	wgResult, err := bot.HandleCallback(context.Background(), telegram.CallbackQuery{From: telegram.User{ID: 1}, Data: "wg:add:wg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !wgResult.ShowAlert || wgResult.Text != "container not running" {
+		t.Fatalf("bad wg unavailable result: %+v", wgResult)
+	}
+	xrayResult, err := bot.HandleCallback(context.Background(), telegram.CallbackQuery{From: telegram.User{ID: 1}, Data: "xray:add:alice"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !xrayResult.ShowAlert || xrayResult.Text != "service disabled in compose" {
+		t.Fatalf("bad xray unavailable result: %+v", xrayResult)
+	}
+}
+
+func TestUnavailableServiceBlocksMessageRoute(t *testing.T) {
+	repo := &repoStub{
+		admins: map[int64]bool{1: true},
+		services: []storage.Service{
+			{Name: "wg", DisplayName: "WireGuard 0", Enabled: true, Available: false, AvailabilityReason: "container not running"},
+		},
+	}
+	result, err := NewBot(repo, wireguard.NewManager(config.Config{}, repo), xray.NewManager(config.Config{}, repo)).HandleMessage(context.Background(), telegram.Message{
+		From: telegram.User{ID: 1},
+		Chat: telegram.Chat{ID: 10},
+		Text: "/wg",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "container not running" {
+		t.Fatalf("bad unavailable message result: %+v", result)
+	}
+}

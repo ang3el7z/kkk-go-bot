@@ -50,8 +50,14 @@ func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageR
 	case "/start", "/menu", "":
 		return b.menu(ctx)
 	case "/wg", "/wireguard":
+		if err := b.requireServiceAvailable(ctx, "wg"); err != nil {
+			return MessageResult{Text: err.Error()}, nil
+		}
 		return b.wgMenu(ctx, "wg")
 	case "/xray":
+		if err := b.requireServiceAvailable(ctx, "xr"); err != nil {
+			return MessageResult{Text: err.Error()}, nil
+		}
 		return b.xrayMenu(ctx)
 	default:
 		return MessageResult{Text: "Unknown command. Use /menu."}, nil
@@ -71,14 +77,23 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 	name, ok := strings.CutPrefix(query.Data, "service:")
 	if !ok {
 		if query.Data == "/menu wg" || strings.HasPrefix(query.Data, "/menu wg ") || query.Data == "/changeWG 0" {
+			if err := b.requireServiceAvailable(ctx, "wg"); err != nil {
+				return CallbackResult{Text: err.Error(), ShowAlert: true}, nil
+			}
 			msg, err := b.wgMenu(ctx, "wg")
 			return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
 		}
 		if query.Data == "/changeWG 1" {
+			if err := b.requireServiceAvailable(ctx, "wg1"); err != nil {
+				return CallbackResult{Text: err.Error(), ShowAlert: true}, nil
+			}
 			msg, err := b.wgMenu(ctx, "wg1")
 			return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
 		}
 		if query.Data == "/add" {
+			if err := b.requireServiceAvailable(ctx, "wg"); err != nil {
+				return CallbackResult{Text: err.Error(), ShowAlert: true}, nil
+			}
 			_, _, err := b.wg.Add(ctx, "wg", "all", "")
 			if err != nil {
 				return CallbackResult{}, err
@@ -112,6 +127,9 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, dat
 	}
 	action := parts[1]
 	value := parts[2]
+	if err := b.requireServiceAvailable(ctx, wireGuardServiceName(value)); err != nil {
+		return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+	}
 	switch action {
 	case "add":
 		client, _, err := b.wg.Add(ctx, value, "all", "")
@@ -306,6 +324,9 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 func (b *Bot) handleXrayCallback(ctx context.Context, telegramID int64, data string) (CallbackResult, bool, error) {
 	if b.xray == nil || !strings.HasPrefix(data, "xray:") {
 		return CallbackResult{}, false, nil
+	}
+	if err := b.requireServiceAvailable(ctx, "xr"); err != nil {
+		return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
 	}
 	parts := strings.SplitN(data, ":", 3)
 	if len(parts) < 2 {
@@ -718,4 +739,30 @@ func templateValues(templates xray.TemplateInfo) map[string][]string {
 		"sing":  templates.Sing,
 		"clash": templates.Clash,
 	}
+}
+
+func (b *Bot) requireServiceAvailable(ctx context.Context, name string) error {
+	service, found, err := b.repo.Service(ctx, name)
+	if err != nil {
+		return err
+	}
+	if !found || !service.Enabled || !service.Available {
+		reason := service.AvailabilityReason
+		if reason == "" {
+			reason = "service unavailable"
+		}
+		return fmt.Errorf("%s", reason)
+	}
+	return nil
+}
+
+func wireGuardServiceName(value string) string {
+	service := value
+	if before, _, ok := strings.Cut(value, ":"); ok {
+		service = before
+	}
+	if strings.HasPrefix(service, "wg1") {
+		return "wg1"
+	}
+	return "wg"
 }
