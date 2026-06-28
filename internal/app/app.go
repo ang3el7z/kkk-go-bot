@@ -56,6 +56,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 
 	xrayManager := xray.NewManager(cfg, repo)
 	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xrayManager)
+	go runXrayStatsLoop(ctx, xrayManager)
 	client := telegram.NewAPIClient(cfg.TelegramToken)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +113,21 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 			return nil
 		}
 		return err
+	}
+}
+
+func runXrayStatsLoop(ctx context.Context, manager *xray.Manager) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := manager.RefreshStats(ctx); err != nil {
+				log.Printf("refresh xray stats: %v", err)
+			}
+		}
 	}
 }
 

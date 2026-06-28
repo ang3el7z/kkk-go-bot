@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -32,11 +33,28 @@ type ClientInfo struct {
 }
 
 type Info struct {
-	Transport     string
-	HWIDEnabled   bool
-	HWIDDefault   int
-	Clients       []ClientInfo
-	RouteProfiles []string
+	Transport   string
+	HWIDEnabled bool
+	HWIDDefault int
+	Clients     []ClientInfo
+	Routes      RouteLists
+	Templates   TemplateInfo
+}
+
+type RouteLists struct {
+	Block    []string
+	Warp     []string
+	Proxy    []string
+	Subnet   []string
+	Process  []string
+	Package  []string
+	RuleSets []string
+}
+
+type TemplateInfo struct {
+	V2Ray []string
+	Sing  []string
+	Clash []string
 }
 
 func NewManager(cfg config.Config, repo storage.Repository) *Manager {
@@ -66,6 +84,8 @@ func (m *Manager) Info(ctx context.Context) (Info, error) {
 		return Info{}, err
 	}
 	info := Info{Transport: transport, HWIDEnabled: hwidEnabled, HWIDDefault: hwidDefault, Clients: make([]ClientInfo, 0, len(clients))}
+	info.Routes = m.routes(ctx)
+	info.Templates = m.templates(ctx)
 	for idx, client := range clients {
 		item := ClientInfo{ID: client.ID, Name: client.Name, Enabled: client.Enabled}
 		var payload map[string]any
@@ -238,6 +258,65 @@ func (m *Manager) SetClientHWIDLimit(ctx context.Context, id string, count int) 
 			payload["hwid_limit"] = count
 		}
 	})
+}
+
+func (m *Manager) AddRouteItem(ctx context.Context, list, value string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("route value is empty")
+	}
+	values, err := m.stringList(ctx, routeSettingKey(list))
+	if err != nil {
+		return err
+	}
+	for _, existing := range values {
+		if existing == value {
+			return nil
+		}
+	}
+	values = append(values, value)
+	return m.setStringList(ctx, routeSettingKey(list), values)
+}
+
+func (m *Manager) DeleteRouteItem(ctx context.Context, list, value string) error {
+	values, err := m.stringList(ctx, routeSettingKey(list))
+	if err != nil {
+		return err
+	}
+	out := values[:0]
+	for _, existing := range values {
+		if existing != value {
+			out = append(out, existing)
+		}
+	}
+	return m.setStringList(ctx, routeSettingKey(list), out)
+}
+
+func (m *Manager) AddTemplate(ctx context.Context, typ, name, body string) error {
+	name = strings.TrimSpace(name)
+	body = strings.TrimSpace(body)
+	if name == "" || body == "" {
+		return errors.New("template name/body is empty")
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		return err
+	}
+	templates, err := m.templateMap(ctx, typ)
+	if err != nil {
+		return err
+	}
+	templates[name] = parsed
+	return m.setTemplateMap(ctx, typ, templates)
+}
+
+func (m *Manager) DeleteTemplate(ctx context.Context, typ, name string) error {
+	templates, err := m.templateMap(ctx, typ)
+	if err != nil {
+		return err
+	}
+	delete(templates, name)
+	return m.setTemplateMap(ctx, typ, templates)
 }
 
 func (m *Manager) SetTimer(ctx context.Context, id, expiresAt string) error {
@@ -472,6 +551,92 @@ func (m *Manager) setPacValue(key string, value any) error {
 		return err
 	}
 	return os.WriteFile(path, body, 0o644)
+}
+
+func (m *Manager) routes(ctx context.Context) RouteLists {
+	return RouteLists{
+		Block:    mustList(m.stringList(ctx, routeSettingKey("block"))),
+		Warp:     mustList(m.stringList(ctx, routeSettingKey("warp"))),
+		Proxy:    mustList(m.stringList(ctx, routeSettingKey("proxy"))),
+		Subnet:   mustList(m.stringList(ctx, routeSettingKey("subnet"))),
+		Process:  mustList(m.stringList(ctx, routeSettingKey("process"))),
+		Package:  mustList(m.stringList(ctx, routeSettingKey("package"))),
+		RuleSets: mustList(m.stringList(ctx, routeSettingKey("ruleset"))),
+	}
+}
+
+func (m *Manager) templates(ctx context.Context) TemplateInfo {
+	return TemplateInfo{
+		V2Ray: sortedMapKeys(mustMap(m.templateMap(ctx, "v2ray"))),
+		Sing:  sortedMapKeys(mustMap(m.templateMap(ctx, "sing"))),
+		Clash: sortedMapKeys(mustMap(m.templateMap(ctx, "clash"))),
+	}
+}
+
+func (m *Manager) stringList(ctx context.Context, key string) ([]string, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, key)
+	if err != nil || !ok {
+		return nil, err
+	}
+	var values []string
+	if err := json.Unmarshal([]byte(setting.ValueJSON), &values); err != nil {
+		return nil, nil
+	}
+	return values, nil
+}
+
+func (m *Manager) setStringList(ctx context.Context, key string, values []string) error {
+	sort.Strings(values)
+	body, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	return m.repo.SetSetting(ctx, storage.Setting{Key: key, ValueJSON: string(body)})
+}
+
+func (m *Manager) templateMap(ctx context.Context, typ string) (map[string]any, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, templateSettingKey(typ))
+	if err != nil || !ok {
+		return map[string]any{}, err
+	}
+	values := map[string]any{}
+	if err := json.Unmarshal([]byte(setting.ValueJSON), &values); err != nil {
+		return map[string]any{}, nil
+	}
+	return values, nil
+}
+
+func (m *Manager) setTemplateMap(ctx context.Context, typ string, values map[string]any) error {
+	body, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+	return m.repo.SetSetting(ctx, storage.Setting{Key: templateSettingKey(typ), ValueJSON: string(body)})
+}
+
+func mustList(values []string, _ error) []string {
+	return values
+}
+
+func mustMap(values map[string]any, _ error) map[string]any {
+	return values
+}
+
+func sortedMapKeys(values map[string]any) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func routeSettingKey(list string) string {
+	return "xray.routes." + list
+}
+
+func templateSettingKey(typ string) string {
+	return "xray.templates." + typ
 }
 
 func (m *Manager) template() (map[string]any, error) {

@@ -272,6 +272,26 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 			result, err := b.xrayMenu(ctx)
 			return result, true, err
 		}
+	case "xray_route_add":
+		err = b.xray.AddRouteItem(ctx, payload.ClientID, msg.Text)
+		if err == nil {
+			result, err := b.xrayMenu(ctx)
+			return result, true, err
+		}
+	case "xray_template_add":
+		typ, _, ok := strings.Cut(payload.ClientID, ":")
+		if !ok {
+			return MessageResult{Text: "Bad template payload"}, true, nil
+		}
+		name, templateBody, ok := strings.Cut(msg.Text, "\n")
+		if !ok {
+			return MessageResult{Text: "Send template as: name newline JSON body"}, true, nil
+		}
+		err = b.xray.AddTemplate(ctx, typ, name, templateBody)
+		if err == nil {
+			result, err := b.xrayMenu(ctx)
+			return result, true, err
+		}
 	default:
 		return MessageResult{Text: "Unknown pending operation"}, true, nil
 	}
@@ -371,6 +391,36 @@ func (b *Bot) handleXrayCallback(ctx context.Context, telegramID int64, data str
 			return CallbackResult{}, true, err
 		}
 		return CallbackResult{Text: "Send per-user HWID device count, or 0 for default", ShowAlert: true}, true, nil
+	case "routeadd":
+		if err := b.setPendingOperation(ctx, telegramID, "xray_route_add", value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send route value for " + value, ShowAlert: true}, true, nil
+	case "routedel":
+		list, item, ok := strings.Cut(value, ":")
+		if !ok {
+			return CallbackResult{Text: "Bad route delete action", ShowAlert: true}, true, nil
+		}
+		if err := b.xray.DeleteRouteItem(ctx, list, item); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.xrayMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "templateadd":
+		if err := b.setPendingOperation(ctx, telegramID, "xray_template_add", value+":template"); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send template as: name newline JSON body", ShowAlert: true}, true, nil
+	case "templatedel":
+		typ, name, ok := strings.Cut(value, ":")
+		if !ok {
+			return CallbackResult{Text: "Bad template delete action", ShowAlert: true}, true, nil
+		}
+		if err := b.xray.DeleteTemplate(ctx, typ, name); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.xrayMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
 	case "link":
 		link, err := b.xray.Link(ctx, value)
 		if err != nil {
@@ -574,7 +624,25 @@ func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
 		{Text: fmt.Sprintf("HWID: %t", info.HWIDEnabled), Data: "xray:hwidglobal"},
 		{Text: fmt.Sprintf("Default HWID: %d", info.HWIDDefault), Data: "xray:hwiddefault"},
 	})
+	for _, list := range []string{"block", "warp", "proxy", "subnet", "process", "package", "ruleset"} {
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "Add route " + list, Data: "xray:routeadd:" + list}})
+	}
+	for list, values := range routeValues(info.Routes) {
+		for _, value := range values {
+			keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "del " + list + " " + value, Data: "xray:routedel:" + list + ":" + value}})
+		}
+	}
+	for _, typ := range []string{"v2ray", "sing", "clash"} {
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "Add template " + typ, Data: "xray:templateadd:" + typ}})
+	}
+	for typ, values := range templateValues(info.Templates) {
+		for _, value := range values {
+			keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "del template " + typ + " " + value, Data: "xray:templatedel:" + typ + ":" + value}})
+		}
+	}
 	lines := []string{"transport=" + info.Transport}
+	lines = append(lines, routeSummary(info.Routes)...)
+	lines = append(lines, "templates v2ray="+strings.Join(info.Templates.V2Ray, ","), "templates sing="+strings.Join(info.Templates.Sing, ","), "templates clash="+strings.Join(info.Templates.Clash, ","))
 	for _, client := range info.Clients {
 		status := "off"
 		if client.Enabled {
@@ -618,4 +686,36 @@ func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
 		text += "\n\n" + strings.Join(lines, "\n")
 	}
 	return MessageResult{Text: text, Keyboard: keyboard}, nil
+}
+
+func routeSummary(routes xray.RouteLists) []string {
+	return []string{
+		"routes block=" + strings.Join(routes.Block, ","),
+		"routes warp=" + strings.Join(routes.Warp, ","),
+		"routes proxy=" + strings.Join(routes.Proxy, ","),
+		"routes subnet=" + strings.Join(routes.Subnet, ","),
+		"routes process=" + strings.Join(routes.Process, ","),
+		"routes package=" + strings.Join(routes.Package, ","),
+		"routes ruleset=" + strings.Join(routes.RuleSets, ","),
+	}
+}
+
+func routeValues(routes xray.RouteLists) map[string][]string {
+	return map[string][]string{
+		"block":   routes.Block,
+		"warp":    routes.Warp,
+		"proxy":   routes.Proxy,
+		"subnet":  routes.Subnet,
+		"process": routes.Process,
+		"package": routes.Package,
+		"ruleset": routes.RuleSets,
+	}
+}
+
+func templateValues(templates xray.TemplateInfo) map[string][]string {
+	return map[string][]string{
+		"v2ray": templates.V2Ray,
+		"sing":  templates.Sing,
+		"clash": templates.Clash,
+	}
 }

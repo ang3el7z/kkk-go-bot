@@ -59,6 +59,12 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	if err := manager.SetClientHWIDLimit(ctx, client.ID, 2); err != nil {
 		t.Fatal(err)
 	}
+	if err := manager.AddRouteItem(ctx, "block", "example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AddTemplate(ctx, "v2ray", "basic", `{"outbounds":[]}`); err != nil {
+		t.Fatal(err)
+	}
 	if err := manager.ResetUUID(ctx, client.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -95,8 +101,14 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Transport != "Reality" || !info.HWIDEnabled || info.HWIDDefault != 3 || len(info.Clients) != 1 || info.Clients[0].Download == "" || info.Clients[0].Upload == "" {
+	if info.Transport != "Reality" || !info.HWIDEnabled || info.HWIDDefault != 3 || len(info.Routes.Block) != 1 || len(info.Templates.V2Ray) != 1 || len(info.Clients) != 1 || info.Clients[0].Download == "" || info.Clients[0].Upload == "" {
 		t.Fatalf("bad info: %+v", info)
+	}
+	if err := manager.DeleteRouteItem(ctx, "block", "example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.DeleteTemplate(ctx, "v2ray", "basic"); err != nil {
+		t.Fatal(err)
 	}
 	clients, err := manager.List(ctx)
 	if err != nil {
@@ -114,5 +126,18 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	}
 	if len(clients) != 0 {
 		t.Fatalf("client should be deleted: %+v", clients)
+	}
+}
+
+func TestSetStatCounters(t *testing.T) {
+	values := map[string]any{
+		"global": map[string]any{"download": float64(10), "upload": float64(20)},
+	}
+	setStatCounters(values, 5, 7)
+	if nestedInt64(values, "global", "download") != 15 {
+		t.Fatalf("bad download: %+v", values)
+	}
+	if nestedInt64(values, "session", "upload") != 7 {
+		t.Fatalf("bad session: %+v", values)
 	}
 }
