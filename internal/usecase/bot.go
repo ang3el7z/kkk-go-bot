@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"strings"
 	"time"
 
@@ -225,6 +226,12 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, dat
 		}
 		msg.Text = fmt.Sprintf("Amnezia: %t\n\n%s", enabled, msg.Text)
 		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, nil
+	case "resetamnezia":
+		if err := b.wg.ResetAmnezia(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, value)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
 	case "endpoint":
 		enabled, err := b.wg.ToggleEndpoint(ctx, value)
 		if err != nil {
@@ -268,6 +275,11 @@ func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, dat
 			return CallbackResult{}, true, err
 		}
 		return CallbackResult{Text: "Send default AllowedIPs for new peers, e.g. 0.0.0.0/0", ShowAlert: true}, true, nil
+	case "dnsdefault", "mtudefault":
+		if err := b.setPending(ctx, telegramID, action, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: promptForWGAction(action), ShowAlert: true}, true, nil
 	case "rename", "timer", "dns", "mtu", "allowedips":
 		if err := b.setPending(ctx, telegramID, action, value); err != nil {
 			return CallbackResult{}, true, err
@@ -305,6 +317,10 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 		err = b.wg.SetAllowedIPs(ctx, payload.ClientID, msg.Text)
 	case "wg_defaultallowedips":
 		err = b.wg.SetDefaultAllowedIPs(ctx, payload.ClientID, msg.Text)
+	case "wg_dnsdefault":
+		err = b.wg.SetDefaultDNS(ctx, payload.ClientID, msg.Text)
+	case "wg_mtudefault":
+		err = b.wg.SetDefaultMTU(ctx, payload.ClientID, msg.Text)
 	case "wg_subnetadd":
 		err = b.wg.AddSubnet(ctx, payload.ClientID, msg.Text)
 	case "xray_add":
@@ -717,76 +733,94 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 	if err != nil {
 		return MessageResult{}, err
 	}
-	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{{
-		{Text: "add peer", Data: "wg:add:" + instance},
-		{Text: fmt.Sprintf("Amnezia: %t", info.Amnezia), Data: "wg:amnezia:" + instance},
-		{Text: "default allowed IPs", Data: "wg:defaultallowedips:" + instance},
-	}}}
+	pac := b.legacyPAC(ctx)
+	keyboard := &telegram.InlineKeyboard{}
 	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-		{Text: fmt.Sprintf("proxy ip: %t", info.EndpointUseIP), Data: "wg:endpoint:" + instance},
-		{Text: fmt.Sprintf("torrent: %t", info.BlockTorrent), Data: "wg:torrent:" + instance},
-		{Text: fmt.Sprintf("exchange: %t", info.BlockExchange), Data: "wg:exchange:" + instance},
+		{Text: i18n(pac, boolKey(info.Amnezia)) + " amnezia", Data: "wg:amnezia:" + instance},
 	})
-	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-		{Text: "subnet", Data: "wg:subnetadd:" + instance},
-	})
-	lines := []string{"default allow=" + info.DefaultAllowedIPs}
-	if len(info.Subnets) > 0 {
-		lines = append(lines, "subnets="+strings.Join(info.Subnets, ","))
-		for _, subnet := range info.Subnets {
-			keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{
-				Text: "delete " + subnet,
-				Data: "wg:subnetdel:" + instance + ":" + subnet,
-			}})
-		}
+	if info.Amnezia {
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "reset obf-keys", Data: "wg:resetamnezia:" + instance}})
 	}
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: i18n(pac, boolKey(!info.BlockTorrent)) + " " + i18n(pac, "torrent") + " ", Data: "wg:torrent:" + instance},
+		{Text: i18n(pac, boolKey(!info.BlockExchange)) + " " + i18n(pac, "exchange") + " ", Data: "wg:exchange:" + instance},
+		{Text: i18n(pac, "listSubnet"), Data: "wg:subnetadd:" + instance},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: i18n(pac, "defaultDNS") + ": " + info.DefaultDNS, Data: "wg:dnsdefault:" + instance},
+		{Text: i18n(pac, "defaultMTU") + ": " + info.DefaultMTU, Data: "wg:mtudefault:" + instance},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{
+		Text: i18n(pac, "endpoint") + ": " + wireGuardEndpointLabel(pac, info.EndpointUseIP),
+		Data: "wg:endpoint:" + instance,
+	}})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: i18n(pac, "add peer"), Data: "wg:add:" + instance}})
+
+	lines := make([]string, 0, len(info.Clients)+1)
 	for _, client := range info.Clients {
-		status := "off"
-		if client.Enabled {
-			status = "on"
-		}
-		details := []string{client.Address}
-		if client.AllowedIPs != "" {
-			details = append(details, "allow="+client.AllowedIPs)
-		}
-		if client.DNS != "" {
-			details = append(details, "dns="+client.DNS)
-		}
-		if client.MTU != "" {
-			details = append(details, "mtu="+client.MTU)
-		}
-		if client.ExpiresAt != "" {
-			details = append(details, "until="+client.ExpiresAt)
-		}
-		if client.Handshake != "" {
-			details = append(details, "handshake="+client.Handshake)
-		}
-		if client.Transfer != "" {
-			details = append(details, "transfer="+client.Transfer)
-		}
-		lines = append(lines, fmt.Sprintf("%s %s %s", status, client.Name, strings.Join(details, " ")))
+		lines = append(lines, wgClientStatusLine(pac, client))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: client.Name, Data: "wg:toggle:" + client.ID},
-			{Text: "show QR", Data: "wg:qr:" + client.ID},
-			{Text: "download config", Data: "wg:download:" + client.ID},
-			{Text: "delete", Data: "wg:delete:" + client.ID},
+			{Text: i18n(pac, "show QR"), Data: "wg:qr:" + client.ID},
+			{Text: i18n(pac, "download"), Data: "wg:download:" + client.ID},
+			{Text: i18n(pac, "delete"), Data: "wg:delete:" + client.ID},
 		})
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-			{Text: "rename", Data: "wg:rename:" + client.ID},
-			{Text: "timer", Data: "wg:timer:" + client.ID},
-			{Text: "DNS", Data: "wg:dns:" + client.ID},
+			{Text: i18n(pac, "rename"), Data: "wg:rename:" + client.ID},
+			{Text: i18n(pac, "timer"), Data: "wg:timer:" + client.ID},
+			{Text: i18n(pac, "dns"), Data: "wg:dns:" + client.ID},
 			{Text: "MTU", Data: "wg:mtu:" + client.ID},
 		})
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "AllowedIPs", Data: "wg:allowedips:" + client.ID},
 		})
 	}
-	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "back", Data: "service:menu"}})
-	text := "WireGuard " + instance
-	if len(lines) > 0 {
-		text += "\n\n" + strings.Join(lines, "\n")
+	for _, subnet := range info.Subnets {
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{
+			Text: i18n(pac, "delete") + " " + subnet,
+			Data: "wg:subnetdel:" + instance + ":" + subnet,
+		}})
 	}
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: i18n(pac, "update status"), Data: "service:" + instance},
+		{Text: i18n(pac, "back"), Data: "service:menu"},
+	})
+	title := wireGuardTitle(ctx, b.repo, pac, instance) + " " + wireGuardInstanceNumber(instance)
+	text := "Menu -> " + title + "\n\n<code>" + html.EscapeString(strings.Join(lines, "\n")) + "</code>"
 	return MessageResult{Text: text, Keyboard: keyboard}, nil
+}
+
+func wgClientStatusLine(pac map[string]any, client wireguard.ClientInfo) string {
+	status := i18n(pac, "off")
+	if client.Enabled {
+		status = i18n(pac, "on")
+	}
+	parts := []string{client.Name}
+	if client.ExpiresAt != "" {
+		parts = append(parts, client.ExpiresAt)
+	}
+	parts = append(parts, status)
+	if client.Transfer != "" {
+		parts = append(parts, client.Transfer)
+	}
+	return strings.Join(parts, " ")
+}
+
+func wireGuardInstanceNumber(instance string) string {
+	if instance == "wg1" {
+		return "1"
+	}
+	return "0"
+}
+
+func wireGuardEndpointLabel(pac map[string]any, useIP bool) string {
+	if useIP {
+		return envDefault("IP", envDefault("PUBLIC_IP", ""))
+	}
+	if domain := stringValue(pac["domain"]); domain != "" {
+		return domain
+	}
+	return envDefault("DOMAIN", envDefault("PUBLIC_IP", envDefault("IP", "")))
 }
 
 func (b *Bot) adguardMenu(ctx context.Context) (MessageResult, error) {
@@ -872,6 +906,10 @@ func promptForWGAction(action string) string {
 		return "Send MTU, or 0 to clear"
 	case "allowedips":
 		return "Send AllowedIPs, e.g. 0.0.0.0/0"
+	case "dnsdefault":
+		return "Send default DNS servers separated by comma, or 0 to clear"
+	case "mtudefault":
+		return "Send default MTU, or 0 to clear"
 	default:
 		return "Send value"
 	}
@@ -882,78 +920,104 @@ func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
 	if err != nil {
 		return MessageResult{}, err
 	}
-	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{{{Text: "Add user", Data: "xray:add"}}}}
+	pac := b.legacyPAC(ctx)
+	keyboard := &telegram.InlineKeyboard{}
 	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-		{Text: "WS", Data: "xray:transport:Websocket"},
-		{Text: "Reality", Data: "xray:transport:Reality"},
-		{Text: "XHTTP", Data: "xray:transport:xhttp"},
+		{Text: i18n(pac, "reset stats"), Data: "xray:resetstats:"},
+		{Text: i18n(pac, "reset monthly") + ": " + i18n(pac, "off"), Data: "settings:resetmonthly"},
 	})
 	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-		{Text: fmt.Sprintf("HWID: %t", info.HWIDEnabled), Data: "xray:hwidglobal"},
-		{Text: fmt.Sprintf("Default HWID: %d", info.HWIDDefault), Data: "xray:hwiddefault"},
+		{Text: i18n(pac, "main outbound name: ") + "proxy", Data: "settings:mainoutbound"},
+		{Text: i18n(pac, "cdn"), Data: "settings:linkdomain"},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: "Reality " + i18n(pac, boolKey(info.Transport == "Reality")), Data: "xray:transport:Reality"},
+		{Text: "Websocket " + i18n(pac, boolKey(info.Transport == "Websocket")), Data: "xray:transport:Websocket"},
+		{Text: "XHTTP" + i18n(pac, boolKey(info.Transport == "xhttp")), Data: "xray:transport:xhttp"},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: i18n(pac, "ip limit") + " " + i18n(pac, "off"), Data: "settings:iplimit"},
+		{Text: i18n(pac, "hwid limit") + ": " + i18n(pac, boolKey(info.HWIDEnabled)) + fmt.Sprintf(" (%d)", info.HWIDDefault), Data: "xray:hwidglobal"},
+		{Text: i18n(pac, "set hwid devices count"), Data: "xray:hwiddefault"},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: i18n(pac, "changeFakeDomain"), Data: "settings:fake-domain"},
+		{Text: i18n(pac, "selfFakeDomain"), Data: "settings:self-fake-domain"},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: i18n(pac, "v2ray templates"), Data: "xray:templateadd:v2ray"},
+		{Text: i18n(pac, "sing-box templates"), Data: "xray:templateadd:sing"},
+		{Text: i18n(pac, "mihomo templates"), Data: "xray:templateadd:clash"},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: i18n(pac, "routes"), Data: "xray:routeadd:block"},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: i18n(pac, "add"), Data: "xray:add"},
 	})
 	for _, list := range []string{"block", "warp", "proxy", "subnet", "process", "package", "ruleset"} {
-		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "Add route " + list, Data: "xray:routeadd:" + list}})
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: i18n(pac, "add") + " " + list, Data: "xray:routeadd:" + list}})
 	}
 	for list, values := range routeValues(info.Routes) {
 		for _, value := range values {
-			keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "del " + list + " " + value, Data: "xray:routedel:" + list + ":" + value}})
+			keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: i18n(pac, "delete") + " " + list + " " + value, Data: "xray:routedel:" + list + ":" + value}})
 		}
-	}
-	for _, typ := range []string{"v2ray", "sing", "clash"} {
-		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "Add template " + typ, Data: "xray:templateadd:" + typ}})
 	}
 	for typ, values := range templateValues(info.Templates) {
 		for _, value := range values {
-			keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "del template " + typ + " " + value, Data: "xray:templatedel:" + typ + ":" + value}})
+			keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: i18n(pac, "delete") + " template " + typ + " " + value, Data: "xray:templatedel:" + typ + ":" + value}})
 		}
 	}
-	lines := []string{"transport=" + info.Transport}
+	lines := []string{
+		"transport=" + info.Transport,
+		fmt.Sprintf("hwid=%t default=%d", info.HWIDEnabled, info.HWIDDefault),
+	}
 	lines = append(lines, routeSummary(info.Routes)...)
-	lines = append(lines, "templates v2ray="+strings.Join(info.Templates.V2Ray, ","), "templates sing="+strings.Join(info.Templates.Sing, ","), "templates clash="+strings.Join(info.Templates.Clash, ","))
 	for _, client := range info.Clients {
-		status := "off"
-		if client.Enabled {
-			status = "on"
-		}
-		traffic := ""
-		if client.Download != "" || client.Upload != "" {
-			traffic = fmt.Sprintf(" down=%s up=%s", client.Download, client.Upload)
-		}
-		hwid := ""
-		if info.HWIDEnabled {
-			limit := info.HWIDDefault
-			if client.HWIDLimit > 0 {
-				limit = client.HWIDLimit
-			}
-			hwid = fmt.Sprintf(" hwid=%d", limit)
-			if client.HWIDDisabled {
-				hwid = " hwid=off"
-			}
-		}
-		lines = append(lines, fmt.Sprintf("%s %s%s%s", status, client.Name, traffic, hwid))
+		lines = append(lines, xrayClientStatusLine(pac, info, client))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-			{Text: "toggle " + client.Name, Data: "xray:toggle:" + client.ID},
+			{Text: client.Name, Data: "xray:toggle:" + client.ID},
 			{Text: "link", Data: "xray:link:" + client.ID},
-			{Text: "QR", Data: "xray:qr:" + client.ID},
+			{Text: i18n(pac, "show QR"), Data: "xray:qr:" + client.ID},
 		})
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-			{Text: "rename", Data: "xray:rename:" + client.ID},
-			{Text: "timer", Data: "xray:timer:" + client.ID},
-			{Text: "reset stats", Data: "xray:resetstats:" + client.ID},
+			{Text: i18n(pac, "rename"), Data: "xray:rename:" + client.ID},
+			{Text: i18n(pac, "timer"), Data: "xray:timer:" + client.ID},
+			{Text: i18n(pac, "reset stats"), Data: "xray:resetstats:" + client.ID},
 			{Text: "reset uuid", Data: "xray:resetuuid:" + client.ID},
-			{Text: "delete", Data: "xray:delete:" + client.ID},
+			{Text: i18n(pac, "delete"), Data: "xray:delete:" + client.ID},
 		})
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-			{Text: "HWID on/off", Data: "xray:hwidtoggle:" + client.ID},
-			{Text: "HWID limit", Data: "xray:hwidlimit:" + client.ID},
+			{Text: i18n(pac, "hwid limit"), Data: "xray:hwidlimit:" + client.ID},
+			{Text: i18n(pac, boolKey(!client.HWIDDisabled)), Data: "xray:hwidtoggle:" + client.ID},
 		})
 	}
-	text := "Xray"
-	if len(lines) > 0 {
-		text += "\n\n" + strings.Join(lines, "\n")
-	}
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: i18n(pac, "back"), Data: "service:menu"}})
+	text := "Menu -> " + i18n(pac, "xray") + "\n\n<code>" + html.EscapeString(strings.Join(lines, "\n")) + "</code>"
 	return MessageResult{Text: text, Keyboard: keyboard}, nil
+}
+
+func xrayClientStatusLine(pac map[string]any, info xray.Info, client xray.ClientInfo) string {
+	status := i18n(pac, "off")
+	if client.Enabled {
+		status = i18n(pac, "on")
+	}
+	traffic := ""
+	if client.Download != "" || client.Upload != "" {
+		traffic = fmt.Sprintf(" (↓%s ↑%s)", client.Download, client.Upload)
+	}
+	hwid := ""
+	if info.HWIDEnabled {
+		limit := info.HWIDDefault
+		if client.HWIDLimit > 0 {
+			limit = client.HWIDLimit
+		}
+		hwid = fmt.Sprintf(" hwid=%d", limit)
+		if client.HWIDDisabled {
+			hwid = " hwid=off"
+		}
+	}
+	return fmt.Sprintf("%s %s%s%s", status, client.Name, traffic, hwid)
 }
 
 func routeSummary(routes xray.RouteLists) []string {

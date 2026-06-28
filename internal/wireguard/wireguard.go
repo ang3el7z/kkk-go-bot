@@ -37,6 +37,8 @@ type Info struct {
 	BlockTorrent      bool
 	BlockExchange     bool
 	DefaultAllowedIPs string
+	DefaultDNS        string
+	DefaultMTU        string
 	Subnets           []string
 	Clients           []ClientInfo
 }
@@ -97,6 +99,14 @@ func (m *Manager) Info(ctx context.Context, instance string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
+	defaultDNS, err := m.DefaultDNS(ctx, instance)
+	if err != nil {
+		return Info{}, err
+	}
+	defaultMTU, err := m.DefaultMTU(ctx, instance)
+	if err != nil {
+		return Info{}, err
+	}
 	subnets, err := m.Subnets(ctx, instance)
 	if err != nil {
 		return Info{}, err
@@ -108,6 +118,8 @@ func (m *Manager) Info(ctx context.Context, instance string) (Info, error) {
 		BlockTorrent:      blockTorrent,
 		BlockExchange:     blockExchange,
 		DefaultAllowedIPs: defaultAllowedIPs,
+		DefaultDNS:        defaultDNS,
+		DefaultMTU:        defaultMTU,
 		Subnets:           subnets,
 	}
 	statuses, _ := dockerWGStatus(ctx, instance)
@@ -215,6 +227,12 @@ func (m *Manager) Add(ctx context.Context, instance, name, allowedIPs string) (s
 		"## name":    name,
 		"PrivateKey": clientPrivate,
 		"Address":    clientIP.String() + "/32",
+	}
+	if dns, err := m.DefaultDNS(ctx, instance); err == nil && dns != "" {
+		clientInterface["DNS"] = dns
+	}
+	if mtu, err := m.DefaultMTU(ctx, instance); err == nil && mtu != "" {
+		clientInterface["MTU"] = mtu
 	}
 	if amnezia {
 		keys, err := amneziaKeys()
@@ -444,6 +462,30 @@ func (m *Manager) SetDefaultAllowedIPs(ctx context.Context, instance, allowedIPs
 	return m.repo.SetSetting(ctx, storage.Setting{Key: defaultAllowedIPsSettingKey(instance), ValueJSON: string(body)})
 }
 
+func (m *Manager) DefaultDNS(ctx context.Context, instance string) (string, error) {
+	return m.stringSetting(ctx, defaultDNSSettingKey(instance), "1.1.1.1")
+}
+
+func (m *Manager) SetDefaultDNS(ctx context.Context, instance, dns string) error {
+	dns = strings.TrimSpace(dns)
+	if dns == "0" {
+		dns = ""
+	}
+	return m.setStringSetting(ctx, defaultDNSSettingKey(instance), dns)
+}
+
+func (m *Manager) DefaultMTU(ctx context.Context, instance string) (string, error) {
+	return m.stringSetting(ctx, defaultMTUSettingKey(instance), "1420")
+}
+
+func (m *Manager) SetDefaultMTU(ctx context.Context, instance, mtu string) error {
+	mtu = strings.TrimSpace(mtu)
+	if mtu == "0" {
+		mtu = ""
+	}
+	return m.setStringSetting(ctx, defaultMTUSettingKey(instance), mtu)
+}
+
 func (m *Manager) ToggleEndpoint(ctx context.Context, instance string) (bool, error) {
 	enabled, err := m.toggleBoolSetting(ctx, endpointSettingKey(instance))
 	if err != nil {
@@ -534,6 +576,14 @@ func (m *Manager) ToggleAmnezia(ctx context.Context, instance string) (bool, err
 		return false, err
 	}
 	return enabled, nil
+}
+
+func (m *Manager) ResetAmnezia(ctx context.Context, instance string) error {
+	enabled, err := m.amneziaEnabled(ctx, instance)
+	if err != nil || !enabled {
+		return err
+	}
+	return m.applyAmnezia(ctx, instance, true)
 }
 
 func (m *Manager) ClientConfig(ctx context.Context, id string) (string, string, error) {
@@ -801,6 +851,26 @@ func (m *Manager) toggleBoolSetting(ctx context.Context, key string) (bool, erro
 	return enabled, m.repo.SetSetting(ctx, storage.Setting{Key: key, ValueJSON: fmt.Sprintf("%t", enabled)})
 }
 
+func (m *Manager) stringSetting(ctx context.Context, key, fallback string) (string, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, key)
+	if err != nil || !ok {
+		return fallback, err
+	}
+	var value string
+	if err := json.Unmarshal([]byte(setting.ValueJSON), &value); err != nil {
+		return fallback, nil
+	}
+	return value, nil
+}
+
+func (m *Manager) setStringSetting(ctx context.Context, key, value string) error {
+	body, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return m.repo.SetSetting(ctx, storage.Setting{Key: key, ValueJSON: string(body)})
+}
+
 func (m *Manager) saveSubnets(ctx context.Context, instance string, values []string) error {
 	sort.Strings(values)
 	body, err := json.Marshal(values)
@@ -996,6 +1066,14 @@ func amneziaSettingKey(instance string) string {
 
 func defaultAllowedIPsSettingKey(instance string) string {
 	return "wireguard." + instance + ".default_allowed_ips"
+}
+
+func defaultDNSSettingKey(instance string) string {
+	return "wireguard." + instance + ".default_dns"
+}
+
+func defaultMTUSettingKey(instance string) string {
+	return "wireguard." + instance + ".default_mtu"
 }
 
 func endpointSettingKey(instance string) string {

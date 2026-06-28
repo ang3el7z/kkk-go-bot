@@ -33,6 +33,12 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	if err := manager.SetDefaultAllowedIPs(ctx, "wg", "10.0.0.0/8"); err != nil {
 		t.Fatal(err)
 	}
+	if err := manager.SetDefaultDNS(ctx, "wg", "9.9.9.9"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetDefaultMTU(ctx, "wg", "1280"); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := manager.ToggleEndpoint(ctx, "wg"); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +64,9 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	}
 	if conf == "" || client.ID == "" {
 		t.Fatalf("missing client data: %+v %q", client, conf)
+	}
+	if !strings.Contains(conf, "DNS = 9.9.9.9") || !strings.Contains(conf, "MTU = 1280") {
+		t.Fatalf("default dns/mtu missing from config: %s", conf)
 	}
 	if err := manager.Toggle(ctx, client.ID); err != nil {
 		t.Fatal(err)
@@ -85,7 +94,7 @@ func TestAddToggleDeletePeer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !info.Amnezia || !info.EndpointUseIP || !info.BlockTorrent || !info.BlockExchange || info.DefaultAllowedIPs != "10.0.0.0/8" || len(info.Subnets) != 1 || len(info.Clients) != 1 || info.Clients[0].Address == "" {
+	if !info.Amnezia || !info.EndpointUseIP || !info.BlockTorrent || !info.BlockExchange || info.DefaultAllowedIPs != "10.0.0.0/8" || info.DefaultDNS != "9.9.9.9" || info.DefaultMTU != "1280" || len(info.Subnets) != 1 || len(info.Clients) != 1 || info.Clients[0].Address == "" {
 		t.Fatalf("bad info: %+v", info)
 	}
 	if err := manager.DeleteSubnet(ctx, "wg", "172.16.0.0/12"); err != nil {

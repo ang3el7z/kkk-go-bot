@@ -266,7 +266,7 @@ func TestSmallServiceMenuUsesImportedStateAndRedactsSecrets(t *testing.T) {
 	if !strings.Contains(result.Text, "MTProto") || !strings.Contains(result.Text, "tg.example") || !strings.Contains(result.Text, "secret present") || strings.Contains(result.Text, `"secret"`) {
 		t.Fatalf("bad small service menu: %+v", result)
 	}
-	if result.Keyboard == nil || len(result.Keyboard.Rows) != 1 || result.Keyboard.Rows[0][0].Data != "service:menu" {
+	if result.Keyboard == nil || !keyboardHasCallback(result.Keyboard, "service:menu") {
 		t.Fatalf("missing back keyboard: %+v", result.Keyboard)
 	}
 }
