@@ -7,6 +7,7 @@
 - SQLite migrations.
 - Legacy read-only importer with secret redaction.
 - Telegram webhook runtime.
+- Telegram adapter: update models, message/callback dispatch, HTML messages, inline keyboards, document/photo uploads, callback answers, and API error validation.
 - Admin bootstrap and `/id`.
 - Main menu generated from service availability.
 - Compose profile `go-bot`.
@@ -27,7 +28,8 @@
 - GO-001 can close after inventory docs are merged.
 - GO-002 Compose/runtime contract implemented.
 - GO-003 Go skeleton implemented.
-- GO-004/006/008 are partially implemented by this integration.
+- GO-004 Telegram adapter implemented.
+- GO-006/008 are partially implemented by this integration.
 - GO-005/007 importer exists but needs full legacy coverage.
 - GO-010 WireGuard parity implemented in Go. Runtime validation on Linux host still required.
 - GO-011 Xray parity implemented in Go. Runtime validation on Linux host still required.

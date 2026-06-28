@@ -73,13 +73,25 @@ type Client interface {
 type APIClient struct {
 	token string
 	http  *http.Client
+	base  string
 }
 
 func NewAPIClient(token string) *APIClient {
 	return &APIClient{
 		token: token,
 		http:  &http.Client{Timeout: 10 * time.Second},
+		base:  "https://api.telegram.org",
 	}
+}
+
+func NewAPIClientWithHTTP(token, base string, client *http.Client) *APIClient {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	if base == "" {
+		base = "https://api.telegram.org"
+	}
+	return &APIClient{token: token, http: client, base: base}
 }
 
 func (c *APIClient) SendMessage(chatID int64, text string, keyboard *InlineKeyboard) error {
@@ -129,7 +141,7 @@ func (c *APIClient) sendMultipartFile(method string, chatID int64, field, filena
 	if err := writer.Close(); err != nil {
 		return err
 	}
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", c.token, method)
+	url := fmt.Sprintf("%s/bot%s/%s", c.base, c.token, method)
 	req, err := http.NewRequest(http.MethodPost, url, &body)
 	if err != nil {
 		return err
@@ -143,7 +155,7 @@ func (c *APIClient) sendMultipartFile(method string, chatID int64, field, filena
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		return fmt.Errorf("telegram %s failed: %s", method, res.Status)
 	}
-	return nil
+	return decodeAPIResponse(method, res.Body)
 }
 
 func (c *APIClient) call(method string, payload any) error {
@@ -151,7 +163,7 @@ func (c *APIClient) call(method string, payload any) error {
 	if err != nil {
 		return err
 	}
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/%s", c.token, method)
+	url := fmt.Sprintf("%s/bot%s/%s", c.base, c.token, method)
 	res, err := c.http.Post(url, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return err
@@ -159,6 +171,23 @@ func (c *APIClient) call(method string, payload any) error {
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode > 299 {
 		return fmt.Errorf("telegram %s failed: %s", method, res.Status)
+	}
+	return decodeAPIResponse(method, res.Body)
+}
+
+func decodeAPIResponse(method string, body io.Reader) error {
+	var payload struct {
+		OK          bool   `json:"ok"`
+		Description string `json:"description"`
+	}
+	if err := json.NewDecoder(body).Decode(&payload); err != nil {
+		return err
+	}
+	if !payload.OK {
+		if payload.Description == "" {
+			payload.Description = "ok=false"
+		}
+		return fmt.Errorf("telegram %s failed: %s", method, payload.Description)
 	}
 	return nil
 }
