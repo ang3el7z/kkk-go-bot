@@ -5,6 +5,7 @@
 - Go module and Docker build target.
 - Go skeleton: `cmd/kkk-go-bot` entrypoint plus `internal/app`, `config`, `storage`, `legacy`, `services`, `telegram`, `usecase`, `wireguard`, and `xray` packages.
 - SQLite migrations.
+- SQLite migration runner: versioned `schema_migrations`, idempotent table creation, and indexes for menu services, clients, pending operations, and secret settings.
 - Legacy read-only importer with secret redaction.
 - Legacy config bridge: optional `app/config.php` import for admins and non-secret scalar settings, with Telegram token/password/secret values redacted and kept out of Go runtime config.
 - Telegram webhook runtime.
@@ -30,7 +31,8 @@
 - GO-002 Compose/runtime contract implemented.
 - GO-003 Go skeleton implemented.
 - GO-004 Telegram adapter implemented.
-- GO-006/008 are partially implemented by this integration.
+- GO-006 SQLite migrations implemented.
+- GO-008 is partially implemented by this integration.
 - GO-005 Legacy config bridge implemented.
 - GO-007 importer exists but needs full legacy coverage.
 - GO-010 WireGuard parity implemented in Go. Runtime validation on Linux host still required.

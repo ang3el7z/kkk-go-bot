@@ -14,6 +14,12 @@ type SQLite struct {
 	db *sql.DB
 }
 
+type migration struct {
+	version    int
+	name       string
+	statements []string
+}
+
 func OpenSQLite(path string) (*SQLite, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -31,6 +37,34 @@ func OpenSQLite(path string) (*SQLite, error) {
 func (s *SQLite) Close() error { return s.db.Close() }
 
 func (s *SQLite) Migrate(ctx context.Context) error {
+	if _, err := s.db.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`); err != nil {
+		return err
+	}
+	for _, migration := range migrations() {
+		applied, err := s.migrationApplied(ctx, migration.version)
+		if err != nil {
+			return err
+		}
+		if applied {
+			continue
+		}
+		if err := s.applyMigration(ctx, migration); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *SQLite) migrationApplied(ctx context.Context, version int) (bool, error) {
+	var one int
+	err := s.db.QueryRowContext(ctx, `SELECT 1 FROM schema_migrations WHERE version = ?`, version).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *SQLite) applyMigration(ctx context.Context, migration migration) (err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -41,9 +75,24 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 		}
 	}()
 
-	statements := []string{
-		`CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL)`,
-		`CREATE TABLE IF NOT EXISTS admins (
+	for _, statement := range migration.statements {
+		if _, err = tx.ExecContext(ctx, statement); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO schema_migrations(version, name, applied_at) VALUES (?, ?, ?)`, migration.version, migration.name, now()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func migrations() []migration {
+	return []migration{
+		{
+			version: 1,
+			name:    "initial_go_runtime",
+			statements: []string{
+				`CREATE TABLE IF NOT EXISTS admins (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			telegram_id INTEGER NOT NULL UNIQUE,
 			username TEXT NOT NULL DEFAULT '',
@@ -51,7 +100,7 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 			last_name TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS services (
+				`CREATE TABLE IF NOT EXISTS services (
 			name TEXT PRIMARY KEY,
 			display_name TEXT NOT NULL,
 			enabled INTEGER NOT NULL,
@@ -61,13 +110,13 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 			sort_order INTEGER NOT NULL DEFAULT 0,
 			updated_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS settings (
+				`CREATE TABLE IF NOT EXISTS settings (
 			key TEXT PRIMARY KEY,
 			value_json TEXT NOT NULL,
 			secret INTEGER NOT NULL DEFAULT 0,
 			updated_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS clients (
+				`CREATE TABLE IF NOT EXISTS clients (
 			id TEXT PRIMARY KEY,
 			protocol TEXT NOT NULL,
 			name TEXT NOT NULL,
@@ -77,12 +126,12 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 			updated_at TEXT NOT NULL,
 			UNIQUE(protocol, name)
 		)`,
-		`CREATE TABLE IF NOT EXISTS wireguard_servers (
+				`CREATE TABLE IF NOT EXISTS wireguard_servers (
 			instance TEXT PRIMARY KEY,
 			config_json TEXT NOT NULL DEFAULT '{}',
 			updated_at TEXT NOT NULL
 		)`,
-		`CREATE TABLE IF NOT EXISTS pending_operations (
+				`CREATE TABLE IF NOT EXISTS pending_operations (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			telegram_id INTEGER NOT NULL,
 			operation TEXT NOT NULL,
@@ -90,17 +139,19 @@ func (s *SQLite) Migrate(ctx context.Context) error {
 			created_at TEXT NOT NULL,
 			expires_at TEXT NOT NULL
 		)`,
+			},
+		},
+		{
+			version: 2,
+			name:    "query_indexes",
+			statements: []string{
+				`CREATE INDEX IF NOT EXISTS idx_services_menu ON services(enabled, available, menu_group, sort_order, name)`,
+				`CREATE INDEX IF NOT EXISTS idx_clients_protocol_name ON clients(protocol, name)`,
+				`CREATE INDEX IF NOT EXISTS idx_pending_operations_user_expires ON pending_operations(telegram_id, expires_at)`,
+				`CREATE INDEX IF NOT EXISTS idx_settings_secret ON settings(secret, key)`,
+			},
+		},
 	}
-	for _, statement := range statements {
-		if _, err = tx.ExecContext(ctx, statement); err != nil {
-			return err
-		}
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO schema_migrations(version, name, applied_at) VALUES (1, 'initial_go_runtime', ?)`, now()); err != nil {
-		return err
-	}
-	err = tx.Commit()
-	return err
 }
 
 func (s *SQLite) AddAdmin(ctx context.Context, admin Admin) error {
