@@ -37,6 +37,7 @@ make go-down
 ```
 
 Go listens on `127.0.0.1:8082` and uses compose profile `go-bot`. Rollback is `make go-down`; PHP containers stay unchanged.
+Telegram long polling is enabled by default, so a test server does not need a public HTTPS webhook. Set `TELEGRAM_POLLING=0` when running behind an HTTPS webhook.
 
 Final cutover/rollback runbook:
 

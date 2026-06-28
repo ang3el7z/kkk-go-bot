@@ -63,6 +63,9 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xrayManager, adguard.NewManager(cfg, repo), moderation.NewManager(cfg, repo))
 	go runXrayStatsLoop(ctx, xrayManager)
 	client := telegram.NewAPIClient(cfg.TelegramToken)
+	if cfg.TelegramPolling {
+		go runTelegramPolling(ctx, bot, client)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
@@ -211,6 +214,38 @@ func runXrayStatsLoop(ctx context.Context, manager *xray.Manager) {
 		case <-ticker.C:
 			if err := manager.RefreshStats(ctx); err != nil {
 				log.Printf("refresh xray stats: %v", err)
+			}
+		}
+	}
+}
+
+func runTelegramPolling(ctx context.Context, bot *usecase.Bot, client *telegram.APIClient) {
+	if err := client.DeleteWebhook(false); err != nil {
+		log.Printf("delete webhook: %v", err)
+	}
+	var offset int64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		updates, err := client.GetUpdates(offset, 25)
+		if err != nil {
+			log.Printf("telegram polling: %v", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+				continue
+			}
+		}
+		for _, update := range updates {
+			if update.ID >= offset {
+				offset = update.ID + 1
+			}
+			if err := handleUpdate(ctx, bot, client, update); err != nil {
+				log.Printf("handle polling update %d: %v", update.ID, err)
 			}
 		}
 	}

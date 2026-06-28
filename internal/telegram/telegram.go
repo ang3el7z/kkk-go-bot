@@ -76,10 +76,16 @@ type APIClient struct {
 	base  string
 }
 
+type apiResponse[T any] struct {
+	OK          bool   `json:"ok"`
+	Description string `json:"description"`
+	Result      T      `json:"result"`
+}
+
 func NewAPIClient(token string) *APIClient {
 	return &APIClient{
 		token: token,
-		http:  &http.Client{Timeout: 10 * time.Second},
+		http:  &http.Client{Timeout: 35 * time.Second},
 		base:  "https://api.telegram.org",
 	}
 }
@@ -122,6 +128,45 @@ func (c *APIClient) SendDocument(chatID int64, filename string, content []byte) 
 
 func (c *APIClient) SendPhoto(chatID int64, photo Photo) error {
 	return c.sendMultipartFile("sendPhoto", chatID, "photo", photo.Filename, photo.Content, photo.Caption)
+}
+
+func (c *APIClient) DeleteWebhook(dropPending bool) error {
+	return c.call("deleteWebhook", map[string]any{"drop_pending_updates": dropPending})
+}
+
+func (c *APIClient) GetUpdates(offset int64, timeoutSeconds int) ([]Update, error) {
+	payload := map[string]any{
+		"offset":  offset,
+		"timeout": timeoutSeconds,
+		"allowed_updates": []string{
+			"message",
+			"callback_query",
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("%s/bot%s/getUpdates", c.base, c.token)
+	res, err := c.http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		return nil, fmt.Errorf("telegram getUpdates failed: %s", res.Status)
+	}
+	var response apiResponse[[]Update]
+	if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
+		return nil, err
+	}
+	if !response.OK {
+		if response.Description == "" {
+			response.Description = "ok=false"
+		}
+		return nil, fmt.Errorf("telegram getUpdates failed: %s", response.Description)
+	}
+	return response.Result, nil
 }
 
 func (c *APIClient) sendMultipartFile(method string, chatID int64, field, filename string, content []byte, caption string) error {
@@ -176,10 +221,7 @@ func (c *APIClient) call(method string, payload any) error {
 }
 
 func decodeAPIResponse(method string, body io.Reader) error {
-	var payload struct {
-		OK          bool   `json:"ok"`
-		Description string `json:"description"`
-	}
+	var payload apiResponse[json.RawMessage]
 	if err := json.NewDecoder(body).Decode(&payload); err != nil {
 		return err
 	}

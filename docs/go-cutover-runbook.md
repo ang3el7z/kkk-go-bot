@@ -4,6 +4,7 @@
 
 - Linux server with Docker and existing PHP runtime healthy.
 - `.env` contains `TELEGRAM_BOT_TOKEN`.
+- Telegram long polling is enabled by default. Set `TELEGRAM_POLLING=0` only when an HTTPS webhook is configured externally.
 - `app/config.php` exists for legacy import, but Go does not use the token from it.
 - `docker compose --profile go-bot config --services` succeeds.
 - `make go` starts `bot` and `curl http://127.0.0.1:8082/healthz` returns `{"status":"ok"}`.

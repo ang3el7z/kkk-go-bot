@@ -39,6 +39,7 @@ services:
             - /var/run/docker.sock:/var/run/docker.sock:ro
         environment:
             TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+            TELEGRAM_POLLING: ${TELEGRAM_POLLING:-1}
             PUBLIC_IP: ${IP:-}
             DATA_DIR: /data
             DB_PATH: /data/bot.db
