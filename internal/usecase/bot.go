@@ -252,6 +252,26 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 			result, err := b.xrayMenu(ctx)
 			return result, true, err
 		}
+	case "xray_hwid_default":
+		var count int
+		if _, scanErr := fmt.Sscanf(msg.Text, "%d", &count); scanErr != nil {
+			return MessageResult{}, true, scanErr
+		}
+		err = b.xray.SetDefaultHWIDLimit(ctx, count)
+		if err == nil {
+			result, err := b.xrayMenu(ctx)
+			return result, true, err
+		}
+	case "xray_hwid_client":
+		var count int
+		if _, scanErr := fmt.Sscanf(msg.Text, "%d", &count); scanErr != nil {
+			return MessageResult{}, true, scanErr
+		}
+		err = b.xray.SetClientHWIDLimit(ctx, payload.ClientID, count)
+		if err == nil {
+			result, err := b.xrayMenu(ctx)
+			return result, true, err
+		}
 	default:
 		return MessageResult{Text: "Unknown pending operation"}, true, nil
 	}
@@ -318,6 +338,39 @@ func (b *Bot) handleXrayCallback(ctx context.Context, telegramID int64, data str
 		}
 		msg, err := b.xrayMenu(ctx)
 		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "transport":
+		if err := b.xray.SetTransport(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.xrayMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "hwidglobal":
+		enabled, err := b.xray.ToggleGlobalHWID(ctx)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.xrayMenu(ctx)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg.Text = fmt.Sprintf("HWID global: %t\n\n%s", enabled, msg.Text)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, nil
+	case "hwiddefault":
+		if err := b.setPendingOperation(ctx, telegramID, "xray_hwid_default", ""); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send default HWID device count", ShowAlert: true}, true, nil
+	case "hwidtoggle":
+		if err := b.xray.ToggleClientHWID(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.xrayMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "hwidlimit":
+		if err := b.setPendingOperation(ctx, telegramID, "xray_hwid_client", value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send per-user HWID device count, or 0 for default", ShowAlert: true}, true, nil
 	case "link":
 		link, err := b.xray.Link(ctx, value)
 		if err != nil {
@@ -507,13 +560,22 @@ func callbackForService(name string) string {
 }
 
 func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
-	clients, err := b.xray.Info(ctx)
+	info, err := b.xray.Info(ctx)
 	if err != nil {
 		return MessageResult{}, err
 	}
 	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{{{Text: "Add user", Data: "xray:add"}}}}
-	lines := make([]string, 0, len(clients))
-	for _, client := range clients {
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: "WS", Data: "xray:transport:Websocket"},
+		{Text: "Reality", Data: "xray:transport:Reality"},
+		{Text: "XHTTP", Data: "xray:transport:xhttp"},
+	})
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+		{Text: fmt.Sprintf("HWID: %t", info.HWIDEnabled), Data: "xray:hwidglobal"},
+		{Text: fmt.Sprintf("Default HWID: %d", info.HWIDDefault), Data: "xray:hwiddefault"},
+	})
+	lines := []string{"transport=" + info.Transport}
+	for _, client := range info.Clients {
 		status := "off"
 		if client.Enabled {
 			status = "on"
@@ -522,7 +584,18 @@ func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
 		if client.Download != "" || client.Upload != "" {
 			traffic = fmt.Sprintf(" down=%s up=%s", client.Download, client.Upload)
 		}
-		lines = append(lines, fmt.Sprintf("%s %s%s", status, client.Name, traffic))
+		hwid := ""
+		if info.HWIDEnabled {
+			limit := info.HWIDDefault
+			if client.HWIDLimit > 0 {
+				limit = client.HWIDLimit
+			}
+			hwid = fmt.Sprintf(" hwid=%d", limit)
+			if client.HWIDDisabled {
+				hwid = " hwid=off"
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%s %s%s%s", status, client.Name, traffic, hwid))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "toggle " + client.Name, Data: "xray:toggle:" + client.ID},
 			{Text: "link", Data: "xray:link:" + client.ID},
@@ -534,6 +607,10 @@ func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
 			{Text: "reset stats", Data: "xray:resetstats:" + client.ID},
 			{Text: "reset uuid", Data: "xray:resetuuid:" + client.ID},
 			{Text: "delete", Data: "xray:delete:" + client.ID},
+		})
+		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
+			{Text: "HWID on/off", Data: "xray:hwidtoggle:" + client.ID},
+			{Text: "HWID limit", Data: "xray:hwidlimit:" + client.ID},
 		})
 	}
 	text := "Xray"

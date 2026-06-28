@@ -22,11 +22,21 @@ type Manager struct {
 }
 
 type ClientInfo struct {
-	ID       string
-	Name     string
-	Enabled  bool
-	Download string
-	Upload   string
+	ID           string
+	Name         string
+	Enabled      bool
+	Download     string
+	Upload       string
+	HWIDDisabled bool
+	HWIDLimit    int
+}
+
+type Info struct {
+	Transport     string
+	HWIDEnabled   bool
+	HWIDDefault   int
+	Clients       []ClientInfo
+	RouteProfiles []string
 }
 
 func NewManager(cfg config.Config, repo storage.Repository) *Manager {
@@ -37,22 +47,40 @@ func (m *Manager) List(ctx context.Context) ([]storage.Client, error) {
 	return m.repo.ListClients(ctx, "xray")
 }
 
-func (m *Manager) Info(ctx context.Context) ([]ClientInfo, error) {
+func (m *Manager) Info(ctx context.Context) (Info, error) {
 	clients, err := m.repo.ListClients(ctx, "xray")
 	if err != nil {
-		return nil, err
+		return Info{}, err
 	}
 	stats := m.readStats()
-	out := make([]ClientInfo, 0, len(clients))
-	for idx, client := range clients {
-		info := ClientInfo{ID: client.ID, Name: client.Name, Enabled: client.Enabled}
-		if userStats := stats.user(idx); userStats != nil {
-			info.Download = bytesLabel(userStats.download())
-			info.Upload = bytesLabel(userStats.upload())
-		}
-		out = append(out, info)
+	transport, err := m.Transport(ctx)
+	if err != nil {
+		return Info{}, err
 	}
-	return out, nil
+	hwidEnabled, err := m.boolSetting(ctx, "xray.hwid.enabled")
+	if err != nil {
+		return Info{}, err
+	}
+	hwidDefault, err := m.intSetting(ctx, "xray.hwid.default", 1)
+	if err != nil {
+		return Info{}, err
+	}
+	info := Info{Transport: transport, HWIDEnabled: hwidEnabled, HWIDDefault: hwidDefault, Clients: make([]ClientInfo, 0, len(clients))}
+	for idx, client := range clients {
+		item := ClientInfo{ID: client.ID, Name: client.Name, Enabled: client.Enabled}
+		var payload map[string]any
+		_ = json.Unmarshal([]byte(client.ConfigJSON), &payload)
+		item.HWIDDisabled, _ = payload["hwid_disabled"].(bool)
+		if limit, ok := payload["hwid_limit"].(float64); ok {
+			item.HWIDLimit = int(limit)
+		}
+		if userStats := stats.user(idx); userStats != nil {
+			item.Download = bytesLabel(userStats.download())
+			item.Upload = bytesLabel(userStats.upload())
+		}
+		info.Clients = append(info.Clients, item)
+	}
+	return info, nil
 }
 
 func (m *Manager) Add(ctx context.Context, email string) (storage.Client, error) {
@@ -138,6 +166,78 @@ func (m *Manager) ResetUUID(ctx context.Context, id string) error {
 		return err
 	}
 	return m.Render(ctx)
+}
+
+func (m *Manager) Transport(ctx context.Context) (string, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, "xray.transport")
+	if err != nil {
+		return "", err
+	}
+	if ok {
+		var transport string
+		if err := json.Unmarshal([]byte(setting.ValueJSON), &transport); err == nil && transport != "" {
+			return transport, nil
+		}
+	}
+	return "Websocket", nil
+}
+
+func (m *Manager) SetTransport(ctx context.Context, transport string) error {
+	switch transport {
+	case "Websocket", "Reality", "xhttp":
+	default:
+		return errors.New("unsupported Xray transport")
+	}
+	body, _ := json.Marshal(transport)
+	if err := m.repo.SetSetting(ctx, storage.Setting{Key: "xray.transport", ValueJSON: string(body)}); err != nil {
+		return err
+	}
+	if err := m.setPacValue("transport", transport); err != nil {
+		return err
+	}
+	return m.Render(ctx)
+}
+
+func (m *Manager) ToggleGlobalHWID(ctx context.Context) (bool, error) {
+	enabled, err := m.toggleBoolSetting(ctx, "xray.hwid.enabled")
+	if err != nil {
+		return false, err
+	}
+	if err := m.setPacValue("hwid_limit_enabled", enabled); err != nil {
+		return false, err
+	}
+	return enabled, nil
+}
+
+func (m *Manager) SetDefaultHWIDLimit(ctx context.Context, count int) error {
+	if count < 1 {
+		count = 1
+	}
+	if err := m.repo.SetSetting(ctx, storage.Setting{Key: "xray.hwid.default", ValueJSON: fmt.Sprintf("%d", count)}); err != nil {
+		return err
+	}
+	return m.setPacValue("hwid_device_count", count)
+}
+
+func (m *Manager) ToggleClientHWID(ctx context.Context, id string) error {
+	return m.updateClientPayload(ctx, id, func(payload map[string]any) {
+		disabled, _ := payload["hwid_disabled"].(bool)
+		if disabled {
+			delete(payload, "hwid_disabled")
+		} else {
+			payload["hwid_disabled"] = true
+		}
+	})
+}
+
+func (m *Manager) SetClientHWIDLimit(ctx context.Context, id string, count int) error {
+	return m.updateClientPayload(ctx, id, func(payload map[string]any) {
+		if count < 1 {
+			delete(payload, "hwid_limit")
+		} else {
+			payload["hwid_limit"] = count
+		}
+	})
 }
 
 func (m *Manager) SetTimer(ctx context.Context, id, expiresAt string) error {
@@ -231,6 +331,10 @@ func (m *Manager) Render(ctx context.Context) error {
 		return err
 	}
 	rendered := make([]any, 0, len(clients))
+	transport, err := m.Transport(ctx)
+	if err != nil {
+		return err
+	}
 	for _, client := range clients {
 		if !client.Enabled {
 			continue
@@ -240,16 +344,40 @@ func (m *Manager) Render(ctx context.Context) error {
 			return err
 		}
 		delete(payload, "off")
+		if transport == "Reality" {
+			payload["flow"] = "xtls-rprx-vision"
+		} else {
+			delete(payload, "flow")
+		}
 		rendered = append(rendered, payload)
 	}
 	if err := setClients(doc, rendered); err != nil {
 		return err
 	}
+	setTransport(doc, transport)
 	body, err := json.MarshalIndent(doc, "", "    ")
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(filepath.Join(m.cfg.ConfigDir, "xray.json"), body, 0o644)
+}
+
+func (m *Manager) updateClientPayload(ctx context.Context, id string, update func(map[string]any)) error {
+	client, err := m.client(ctx, id)
+	if err != nil {
+		return err
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(client.ConfigJSON), &payload); err != nil {
+		return err
+	}
+	update(payload)
+	body, _ := json.Marshal(payload)
+	client.ConfigJSON = string(body)
+	if err := m.repo.SaveClient(ctx, client); err != nil {
+		return err
+	}
+	return m.Render(ctx)
 }
 
 func (m *Manager) client(ctx context.Context, id string) (storage.Client, error) {
@@ -293,6 +421,59 @@ func (m *Manager) host() string {
 	return host
 }
 
+func (m *Manager) boolSetting(ctx context.Context, key string) (bool, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, key)
+	if err != nil || !ok {
+		return false, err
+	}
+	return setting.ValueJSON == "true", nil
+}
+
+func (m *Manager) toggleBoolSetting(ctx context.Context, key string) (bool, error) {
+	enabled, err := m.boolSetting(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	enabled = !enabled
+	return enabled, m.repo.SetSetting(ctx, storage.Setting{Key: key, ValueJSON: fmt.Sprintf("%t", enabled)})
+}
+
+func (m *Manager) intSetting(ctx context.Context, key string, fallback int) (int, error) {
+	setting, ok, err := m.repo.GetSetting(ctx, key)
+	if err != nil || !ok {
+		return fallback, err
+	}
+	var value int
+	if _, err := fmt.Sscanf(setting.ValueJSON, "%d", &value); err != nil {
+		return fallback, nil
+	}
+	if value < 1 {
+		return fallback, nil
+	}
+	return value, nil
+}
+
+func (m *Manager) setPacValue(key string, value any) error {
+	path := filepath.Join(m.cfg.ConfigDir, "pac.json")
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	pac := map[string]any{}
+	if len(data) > 0 {
+		_ = json.Unmarshal(data, &pac)
+	}
+	pac[key] = value
+	body, err := json.MarshalIndent(pac, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, body, 0o644)
+}
+
 func (m *Manager) template() (map[string]any, error) {
 	path := filepath.Join(m.cfg.ConfigDir, "xray.json")
 	data, err := os.ReadFile(path)
@@ -318,6 +499,42 @@ func setClients(doc map[string]any, clients []any) error {
 	}
 	settings["clients"] = clients
 	return nil
+}
+
+func setTransport(doc map[string]any, transport string) {
+	inbounds, _ := doc["inbounds"].([]any)
+	if len(inbounds) == 0 {
+		return
+	}
+	inbound, _ := inbounds[0].(map[string]any)
+	switch transport {
+	case "Reality":
+		inbound["streamSettings"] = map[string]any{
+			"network":  "tcp",
+			"security": "reality",
+			"realitySettings": map[string]any{
+				"show":        false,
+				"dest":        "www.cloudflare.com:443",
+				"serverNames": []any{"www.cloudflare.com"},
+				"shortIds":    []any{""},
+			},
+		}
+	case "xhttp":
+		inbound["streamSettings"] = map[string]any{
+			"network":  "xhttp",
+			"security": "tls",
+			"xhttpSettings": map[string]any{
+				"path": "/ws",
+			},
+		}
+	default:
+		inbound["streamSettings"] = map[string]any{
+			"network": "ws",
+			"wsSettings": map[string]any{
+				"path": "/ws",
+			},
+		}
+	}
 }
 
 type xrayStats map[string]any

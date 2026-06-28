@@ -44,6 +44,21 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	if err := manager.ResetUserStats(ctx, client.ID); err != nil {
 		t.Fatal(err)
 	}
+	if err := manager.SetTransport(ctx, "Reality"); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, err := manager.ToggleGlobalHWID(ctx); err != nil || !enabled {
+		t.Fatalf("bad global hwid: %v %v", enabled, err)
+	}
+	if err := manager.SetDefaultHWIDLimit(ctx, 3); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ToggleClientHWID(ctx, client.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.SetClientHWIDLimit(ctx, client.ID, 2); err != nil {
+		t.Fatal(err)
+	}
 	if err := manager.ResetUUID(ctx, client.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +95,7 @@ func TestAddToggleRenameDelete(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(info) != 1 || info[0].Download == "" || info[0].Upload == "" {
+	if info.Transport != "Reality" || !info.HWIDEnabled || info.HWIDDefault != 3 || len(info.Clients) != 1 || info.Clients[0].Download == "" || info.Clients[0].Upload == "" {
 		t.Fatalf("bad info: %+v", info)
 	}
 	clients, err := manager.List(ctx)
