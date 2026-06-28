@@ -103,6 +103,10 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 		}
 		return CallbackResult{Text: "Route not migrated yet", ShowAlert: true}, nil
 	}
+	if name == "menu" {
+		msg, err := b.menu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
+	}
 	service, found, err := b.repo.Service(ctx, name)
 	if err != nil {
 		return CallbackResult{}, err
@@ -113,6 +117,9 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 			reason = "service unavailable"
 		}
 		return CallbackResult{Text: reason, ShowAlert: true}, nil
+	}
+	if result, ok, err := b.smallServiceMenu(ctx, name); ok || err != nil {
+		return result, err
 	}
 	return CallbackResult{Text: service.DisplayName, ShowAlert: false}, nil
 }

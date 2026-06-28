@@ -2,6 +2,7 @@ package usecase
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/config"
@@ -14,6 +15,7 @@ import (
 type repoStub struct {
 	admins   map[int64]bool
 	services []storage.Service
+	settings map[string]storage.Setting
 	pending  *storage.PendingOperation
 }
 
@@ -41,9 +43,16 @@ func (r *repoStub) Service(_ context.Context, name string) (storage.Service, boo
 	return storage.Service{}, false, nil
 }
 func (r *repoStub) MenuServices(context.Context) ([]storage.Service, error) { return r.services, nil }
-func (r *repoStub) SetSetting(context.Context, storage.Setting) error       { return nil }
-func (r *repoStub) GetSetting(context.Context, string) (storage.Setting, bool, error) {
-	return storage.Setting{}, false, nil
+func (r *repoStub) SetSetting(_ context.Context, setting storage.Setting) error {
+	if r.settings == nil {
+		r.settings = map[string]storage.Setting{}
+	}
+	r.settings[setting.Key] = setting
+	return nil
+}
+func (r *repoStub) GetSetting(_ context.Context, key string) (storage.Setting, bool, error) {
+	setting, ok := r.settings[key]
+	return setting, ok, nil
 }
 func (r *repoStub) SaveClient(context.Context, storage.Client) error { return nil }
 func (r *repoStub) ListClients(context.Context, string) ([]storage.Client, error) {
@@ -134,5 +143,31 @@ func TestUnavailableServiceBlocksMessageRoute(t *testing.T) {
 	}
 	if result.Text != "container not running" {
 		t.Fatalf("bad unavailable message result: %+v", result)
+	}
+}
+
+func TestSmallServiceMenuUsesImportedStateAndRedactsSecrets(t *testing.T) {
+	repo := &repoStub{
+		admins: map[int64]bool{1: true},
+		services: []storage.Service{
+			{Name: "tg", DisplayName: "MTProto", Enabled: true, Available: true},
+		},
+		settings: map[string]storage.Setting{
+			"legacy.mtprotodomain": {Key: "legacy.mtprotodomain", ValueJSON: `"tg.example"`},
+			"legacy.mtprotosecret": {Key: "legacy.mtprotosecret", ValueJSON: `"secret"`, Secret: true},
+		},
+	}
+	result, err := NewBot(repo, wireguard.NewManager(config.Config{}, repo), xray.NewManager(config.Config{}, repo)).HandleCallback(context.Background(), telegram.CallbackQuery{
+		From: telegram.User{ID: 1},
+		Data: "service:tg",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "MTProto") || !strings.Contains(result.Text, "tg.example") || !strings.Contains(result.Text, "secret present") || strings.Contains(result.Text, `"secret"`) {
+		t.Fatalf("bad small service menu: %+v", result)
+	}
+	if result.Keyboard == nil || len(result.Keyboard.Rows) != 1 || result.Keyboard.Rows[0][0].Data != "service:menu" {
+		t.Fatalf("missing back keyboard: %+v", result.Keyboard)
 	}
 }

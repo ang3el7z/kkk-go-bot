@@ -20,11 +20,12 @@
 - WireGuard parity slice: DB-backed clients/server config, key generation, add/delete/toggle, reply flows for rename/timer/DNS/MTU/AllowedIPs/default AllowedIPs, Telegram config document upload, QR image upload, Amnezia toggle/key material, endpoint switch, torrent/exchange flags synced to `pac.json`, subnet list UI, live traffic/handshake display via Docker exec, richer menu status, `wg0.conf`/`wg1.conf` rendering, optional reload via `WG_RELOAD=1`.
 - Xray parity slice: import users from `xray.json`, DB-backed add/delete/toggle/rename/timer/reset UUID, stats display from `xray.stats`, full stats ingestion loop through Docker exec, VLESS link + QR, reset-stats marker, transport switching, global/per-user HWID controls, route lists, subscription templates, render active users back to `config/xray.json`, Telegram menu callbacks.
 - PAC/subscription parity slice: `/pac?s=<uuid>&t=s|si|cl`, `/pac/sub?id=<uuid>`, and legacy `/pacHASH/<base64-php-params>` URLs return DB-backed Xray subscriptions; origin/DB templates, route placeholders, app import redirects, and Windows sing-box ZIP are implemented.
+- Smaller service adapters: MTProto, Shadowsocks, SS local proxy, OpenConnect, NaiveProxy, Hysteria, DNSTT, and Warp menu adapters summarize imported DB state without leaking secret values.
 
 ## Remaining For Full Parity
 
 - PAC/routing list editors and remote list updates.
-- Service-specific handlers: AdGuard, MTProto, SS, OC, Naive, Hysteria, DNSTT, Warp.
+- Service-specific handlers: AdGuard advanced controls and mutation flows for smaller services.
 - Logs/IP moderation/updater/backup/import-export.
 - DB-owned renderers for config files and reload commands.
 
@@ -42,4 +43,5 @@
 - GO-010 WireGuard parity implemented in Go. Runtime validation on Linux host still required.
 - GO-011 Xray parity implemented in Go. Runtime validation on Linux host still required.
 - GO-012 PAC/subscription parity implemented in Go. Runtime validation on Linux host still required.
-- GO-009..GO-018 remain implementation work for parity/cutover.
+- GO-013 Smaller service adapters implemented.
+- GO-014..GO-018 remain implementation work for parity/cutover.
