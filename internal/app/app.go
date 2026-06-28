@@ -48,6 +48,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 	if err := registry.Refresh(ctx); err != nil {
 		return err
 	}
+	go runServiceRegistryLoop(ctx, registry)
 
 	if opts.Smoke {
 		admins, _ := repo.ListAdmins(ctx)
@@ -214,6 +215,21 @@ func runXrayStatsLoop(ctx context.Context, manager *xray.Manager) {
 		case <-ticker.C:
 			if err := manager.RefreshStats(ctx); err != nil {
 				log.Printf("refresh xray stats: %v", err)
+			}
+		}
+	}
+}
+
+func runServiceRegistryLoop(ctx context.Context, registry *services.Registry) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := registry.Refresh(ctx); err != nil {
+				log.Printf("refresh service registry: %v", err)
 			}
 		}
 	}
