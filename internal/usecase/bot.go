@@ -504,21 +504,12 @@ func (b *Bot) menu(ctx context.Context) (MessageResult, error) {
 	if err != nil {
 		return MessageResult{}, err
 	}
-	keyboard := &telegram.InlineKeyboard{}
-	for i := 0; i < len(services); i += 2 {
-		row := []telegram.InlineButton{{
-			Text: services[i].DisplayName,
-			Data: callbackForService(services[i].Name),
-		}}
-		if i+1 < len(services) {
-			row = append(row, telegram.InlineButton{
-				Text: services[i+1].DisplayName,
-				Data: callbackForService(services[i+1].Name),
-			})
-		}
-		keyboard.Rows = append(keyboard.Rows, row)
+	builder := NewMenuBuilder(2)
+	for _, service := range services {
+		builder.Add(service.DisplayName, callbackForService(service.Name))
 	}
-	if len(keyboard.Rows) == 0 {
+	keyboard := builder.Build()
+	if keyboard == nil {
 		return MessageResult{Text: "No enabled services found in compose."}, nil
 	}
 	return MessageResult{Text: "kkk-go-bot menu", Keyboard: keyboard}, nil
