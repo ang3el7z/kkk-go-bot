@@ -1,11 +1,16 @@
 package xray
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -374,14 +379,187 @@ func (m *Manager) Subscription(ctx context.Context, uuid, typ string) (string, s
 	}
 	switch typ {
 	case "si":
-		body := fmt.Sprintf(`{"outbounds":[{"type":"vless","tag":"%s","server":"%s","server_port":443,"uuid":"%s","tls":{"enabled":true},"transport":{"type":"ws","path":"/ws"}}]}`+"\n", client.Name, m.host(), uuid)
+		body, err := m.subscriptionTemplate(ctx, client, "sing")
+		if err != nil {
+			return "", "", err
+		}
+		if body == "" {
+			body = fmt.Sprintf(`{"outbounds":[{"type":"vless","tag":"%s","server":"%s","server_port":443,"uuid":"%s","tls":{"enabled":true},"transport":{"type":"ws","path":"/ws"}}]}`+"\n", client.Name, m.host(), uuid)
+		}
 		return "application/json", body, nil
 	case "cl":
-		body := fmt.Sprintf("proxies:\n  - name: %s\n    type: vless\n    server: %s\n    port: 443\n    uuid: %s\n    tls: true\n    network: ws\n    ws-opts:\n      path: /ws\n", client.Name, m.host(), uuid)
+		body, err := m.subscriptionTemplate(ctx, client, "clash")
+		if err != nil {
+			return "", "", err
+		}
+		if body == "" {
+			body = fmt.Sprintf("proxies:\n  - name: %s\n    type: vless\n    server: %s\n    port: 443\n    uuid: %s\n    tls: true\n    network: ws\n    ws-opts:\n      path: /ws\n", client.Name, m.host(), uuid)
+		}
 		return "text/yaml", body, nil
 	default:
-		return "text/plain", link + "\n", nil
+		body, err := m.subscriptionTemplate(ctx, client, "v2ray")
+		if err != nil {
+			return "", "", err
+		}
+		if body == "" {
+			body = link + "\n"
+		}
+		return "text/plain", body, nil
 	}
+}
+
+func (m *Manager) subscriptionTemplate(ctx context.Context, client storage.Client, typ string) (string, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(client.ConfigJSON), &payload); err != nil {
+		return "", err
+	}
+	uuid, _ := payload["id"].(string)
+	doc, err := m.subscriptionTemplateDoc(ctx, typ)
+	if err != nil {
+		return "", err
+	}
+	if doc == nil {
+		return "", nil
+	}
+	body, err := json.Marshal(doc)
+	if err != nil {
+		return "", err
+	}
+	text := string(body)
+	routes := m.routes(ctx)
+	listTags := map[string][]string{
+		`"~pac~"`:     routes.Proxy,
+		`"~block~"`:   routes.Block,
+		`"~warp~"`:    routes.Warp,
+		`"~process~"`: routes.Process,
+		`"~package~"`: routes.Package,
+		`"~subnet~"`:  routes.Subnet,
+	}
+	for tag, values := range listTags {
+		encoded, _ := json.Marshal(values)
+		text = strings.ReplaceAll(text, tag, string(encoded))
+	}
+	reality := m.realitySettings()
+	pac := m.pacMap()
+	stringTags := map[string]string{
+		"~outbound~":     pacString(pac, "outbound", "proxy"),
+		"~dns~":          "https://" + m.host() + "/dns-query/" + uuid,
+		"~dnspath~":      "/dns-query/" + uuid,
+		"~uid~":          uuid,
+		"~domain~":       m.host(),
+		"~directdomain~": pacString(pac, "domain", m.host()),
+		"~cdndomain~":    pacString(pac, "linkdomain", m.host()),
+		"~short_id~":     reality.shortID,
+		"~email~":        client.Name,
+		"~public_key~":   pacString(pac, "xray", ""),
+		"~server_name~":  reality.serverName,
+		"~ip~":           m.cfg.PublicIP,
+	}
+	for tag, value := range stringTags {
+		text = strings.ReplaceAll(text, tag, value)
+	}
+	var out any
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		return "", err
+	}
+	pretty, err := json.MarshalIndent(out, "", "    ")
+	if err != nil {
+		return "", err
+	}
+	return string(pretty) + "\n", nil
+}
+
+func (m *Manager) subscriptionTemplateDoc(ctx context.Context, typ string) (any, error) {
+	templates, err := m.templateMap(ctx, typ)
+	if err != nil {
+		return nil, err
+	}
+	if len(templates) > 0 {
+		keys := sortedMapKeys(templates)
+		return templates[keys[0]], nil
+	}
+	name := typ
+	if typ == "sing" {
+		name = "sing"
+	}
+	data, err := os.ReadFile(filepath.Join(m.cfg.ConfigDir, name+".json"))
+	if err != nil {
+		return nil, nil
+	}
+	var doc any
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
+}
+
+func (m *Manager) ImportRedirect(ctx context.Context, uuid, typ, redirect, baseURL string) (string, error) {
+	client, err := m.clientByUUID(ctx, uuid)
+	if err != nil {
+		return "", err
+	}
+	if typ == "" {
+		typ = "s"
+	}
+	v2 := baseURL + "/pac?t=s&s=" + url.QueryEscape(uuid)
+	si := baseURL + "/pac?t=si&s=" + url.QueryEscape(uuid)
+	cl := baseURL + "/pac?t=cl&s=" + url.QueryEscape(uuid)
+	switch redirect {
+	case "si":
+		return "sing-box://import-remote-profile/?url=" + url.QueryEscape(si), nil
+	case "st":
+		return "streisand://import/" + url.QueryEscape(v2), nil
+	case "v":
+		return "v2rayng://install-config?url=" + url.QueryEscape(v2), nil
+	case "k":
+		return "karing://install-config?url=" + url.QueryEscape(si), nil
+	case "h":
+		return "hiddify://install-config/?url=" + url.QueryEscape(si), nil
+	case "c":
+		return "clash://install-config/?url=" + url.QueryEscape(cl) + "&overwrite=no&name=" + url.QueryEscape(client.Name), nil
+	default:
+		return "", fmt.Errorf("unknown import redirect %q", redirect)
+	}
+}
+
+func (m *Manager) WindowsZip(ctx context.Context, uuid, baseURL string) (string, []byte, error) {
+	if _, err := m.clientByUUID(ctx, uuid); err != nil {
+		return "", nil, err
+	}
+	source, err := readSingboxAsset("singbox.zip")
+	if err != nil {
+		return "", nil, err
+	}
+	xml, err := readSingboxAsset("winsw3.xml")
+	if err != nil {
+		return "", nil, err
+	}
+	link := html.EscapeString(baseURL + "/pac?t=si&s=" + url.QueryEscape(uuid))
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	reader, err := zip.NewReader(bytes.NewReader(source), int64(len(source)))
+	if err != nil {
+		return "", nil, err
+	}
+	for _, file := range reader.File {
+		if file.Name == "winsw3.xml" {
+			continue
+		}
+		if err := copyZipFile(writer, file); err != nil {
+			_ = writer.Close()
+			return "", nil, err
+		}
+	}
+	w, err := writer.Create("winsw3.xml")
+	if err != nil {
+		_ = writer.Close()
+		return "", nil, err
+	}
+	_, _ = w.Write([]byte(strings.ReplaceAll(string(xml), "~url~", link)))
+	if err := writer.Close(); err != nil {
+		return "", nil, err
+	}
+	return "singbox.zip", buf.Bytes(), nil
 }
 
 func (m *Manager) QR(ctx context.Context, id string) (string, []byte, error) {
@@ -553,6 +731,53 @@ func (m *Manager) setPacValue(key string, value any) error {
 	return os.WriteFile(path, body, 0o644)
 }
 
+func (m *Manager) pacMap() map[string]any {
+	data, err := os.ReadFile(filepath.Join(m.cfg.ConfigDir, "pac.json"))
+	if err != nil {
+		return map[string]any{}
+	}
+	pac := map[string]any{}
+	_ = json.Unmarshal(data, &pac)
+	return pac
+}
+
+type realityInfo struct {
+	shortID    string
+	serverName string
+}
+
+func (m *Manager) realitySettings() realityInfo {
+	doc, err := m.template()
+	if err != nil {
+		return realityInfo{serverName: "www.cloudflare.com"}
+	}
+	inbounds, _ := doc["inbounds"].([]any)
+	if len(inbounds) == 0 {
+		return realityInfo{serverName: "www.cloudflare.com"}
+	}
+	inbound, _ := inbounds[0].(map[string]any)
+	stream, _ := inbound["streamSettings"].(map[string]any)
+	reality, _ := stream["realitySettings"].(map[string]any)
+	info := realityInfo{serverName: "www.cloudflare.com"}
+	if names, _ := reality["serverNames"].([]any); len(names) > 0 {
+		if value, _ := names[0].(string); value != "" {
+			info.serverName = value
+		}
+	}
+	if ids, _ := reality["shortIds"].([]any); len(ids) > 0 {
+		info.shortID, _ = ids[0].(string)
+	}
+	return info
+}
+
+func pacString(pac map[string]any, key, fallback string) string {
+	value, _ := pac[key].(string)
+	if value == "" {
+		return fallback
+	}
+	return value
+}
+
 func (m *Manager) routes(ctx context.Context) RouteLists {
 	return RouteLists{
 		Block:    mustList(m.stringList(ctx, routeSettingKey("block"))),
@@ -637,6 +862,43 @@ func routeSettingKey(list string) string {
 
 func templateSettingKey(typ string) string {
 	return "xray.templates." + typ
+}
+
+func copyZipFile(writer *zip.Writer, file *zip.File) error {
+	header := file.FileHeader
+	w, err := writer.CreateHeader(&header)
+	if err != nil {
+		return err
+	}
+	r, err := file.Open()
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+	_, err = io.Copy(w, r)
+	return err
+}
+
+func readSingboxAsset(name string) ([]byte, error) {
+	candidates := []string{filepath.Join("/singbox", name), filepath.Join("singbox_windows", name)}
+	if cwd, err := os.Getwd(); err == nil {
+		for dir := cwd; ; dir = filepath.Dir(dir) {
+			candidates = append(candidates, filepath.Join(dir, "singbox_windows", name))
+			parent := filepath.Dir(dir)
+			if parent == dir {
+				break
+			}
+		}
+	}
+	var last error
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return data, nil
+		}
+		last = err
+	}
+	return nil, last
 }
 
 func (m *Manager) template() (map[string]any, error) {

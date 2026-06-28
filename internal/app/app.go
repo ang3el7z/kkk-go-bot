@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/config"
@@ -79,18 +82,17 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/pac", func(w http.ResponseWriter, r *http.Request) {
-		uuid := r.URL.Query().Get("s")
-		if uuid == "" {
-			uuid = r.URL.Query().Get("id")
-		}
-		contentType, body, err := xrayManager.Subscription(r.Context(), uuid, r.URL.Query().Get("t"))
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+	pacHandler := func(w http.ResponseWriter, r *http.Request) {
+		handlePAC(r.Context(), xrayManager, w, r)
+	}
+	mux.HandleFunc("/pac", pacHandler)
+	mux.HandleFunc("/pac/", pacHandler)
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasPrefix(r.URL.Path, "/pac") {
+			handlePAC(r.Context(), xrayManager, w, r)
 			return
 		}
-		w.Header().Set("Content-Type", contentType)
-		_, _ = w.Write([]byte(body))
+		http.NotFound(w, r)
 	})
 
 	server := &http.Server{
@@ -114,6 +116,87 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 		}
 		return err
 	}
+}
+
+func handlePAC(ctx context.Context, manager *xray.Manager, w http.ResponseWriter, r *http.Request) {
+	uuid := r.URL.Query().Get("s")
+	if uuid == "" {
+		uuid = r.URL.Query().Get("id")
+	}
+	typ := r.URL.Query().Get("t")
+	if legacyUUID, legacyType := legacyPACParams(r.URL.Path); uuid == "" && legacyUUID != "" {
+		uuid = legacyUUID
+		if typ == "" {
+			typ = legacyType
+		}
+	}
+	if typ == "" && strings.HasSuffix(r.URL.Path, "/sub") {
+		typ = "s"
+	}
+	baseURL := publicBaseURL(r)
+	if redirect := r.URL.Query().Get("r"); redirect != "" {
+		if redirect == "w" {
+			name, body, err := manager.WindowsZip(ctx, uuid, baseURL)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusNotFound)
+				return
+			}
+			w.Header().Set("Content-Type", "application/zip")
+			w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+			_, _ = w.Write(body)
+			return
+		}
+		location, err := manager.ImportRedirect(ctx, uuid, typ, redirect, baseURL)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusNotFound)
+			return
+		}
+		http.Redirect(w, r, location, http.StatusFound)
+		return
+	}
+	contentType, body, err := manager.Subscription(ctx, uuid, typ)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	_, _ = w.Write([]byte(body))
+}
+
+func publicBaseURL(r *http.Request) string {
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		scheme = "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+	}
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+	return scheme + "://" + host
+}
+
+var phpSerializedPair = regexp.MustCompile(`s:\d+:"([^"]+)";s:\d+:"([^"]*)";`)
+
+func legacyPACParams(path string) (string, string) {
+	segment := path[strings.LastIndex(path, "/")+1:]
+	if segment == "" || segment == "sub" || strings.HasPrefix(segment, "pac") {
+		return "", ""
+	}
+	data, err := base64.StdEncoding.DecodeString(segment)
+	if err != nil {
+		data, err = base64.RawStdEncoding.DecodeString(segment)
+	}
+	if err != nil {
+		return "", ""
+	}
+	values := map[string]string{}
+	for _, match := range phpSerializedPair.FindAllStringSubmatch(string(data), -1) {
+		values[match[1]] = match[2]
+	}
+	return values["s"], values["t"]
 }
 
 func runXrayStatsLoop(ctx context.Context, manager *xray.Manager) {

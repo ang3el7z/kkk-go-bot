@@ -1,9 +1,13 @@
 package xray
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/config"
@@ -139,5 +143,83 @@ func TestSetStatCounters(t *testing.T) {
 	}
 	if nestedInt64(values, "session", "upload") != 7 {
 		t.Fatalf("bad session: %+v", values)
+	}
+}
+
+func TestSubscriptionTemplatesRedirectAndWindowsZip(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "xray.json"), []byte(`{"inbounds":[{"settings":{"clients":[]},"streamSettings":{"realitySettings":{"serverNames":["cdn.example"],"shortIds":["abc"]}}}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "pac.json"), []byte(`{"xray":"pub","outbound":"proxy","domain":"direct.example","linkdomain":"cdn.example"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sing.json"), []byte(`{"outbounds":[{"tag":"~outbound~","uuid":"~uid~","server":"~domain~"}],"route":{"rules":[{"domain_suffix":"~block~"}]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := storage.OpenSQLite(filepath.Join(dir, "bot.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.Close()
+	if err := repo.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	manager := NewManager(config.Config{ConfigDir: dir, Domain: "vpn.example", PublicIP: "203.0.113.10"}, repo)
+	client, err := manager.Add(ctx, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Toggle(ctx, client.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.AddRouteItem(ctx, "block", "blocked.example"); err != nil {
+		t.Fatal(err)
+	}
+	uuid := strings.TrimPrefix(client.ID, "xray:")
+	contentType, body, err := manager.Subscription(ctx, uuid, "si")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contentType != "application/json" || !strings.Contains(body, uuid) || !strings.Contains(body, "blocked.example") || strings.Contains(body, "~uid~") {
+		t.Fatalf("bad templated subscription: %s %s", contentType, body)
+	}
+	location, err := manager.ImportRedirect(ctx, uuid, "", "v", "https://vpn.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(location, "v2rayng://install-config?url=") || !strings.Contains(location, "t%3Ds") {
+		t.Fatalf("bad redirect: %s", location)
+	}
+	name, data, err := manager.WindowsZip(ctx, uuid, "https://vpn.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if name != "singbox.zip" || len(data) == 0 {
+		t.Fatalf("bad zip: %s %d", name, len(data))
+	}
+	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var xml string
+	for _, file := range reader.File {
+		if file.Name != "winsw3.xml" {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		xml = string(body)
+	}
+	if !strings.Contains(xml, "https://vpn.example/pac?t=si") || !strings.Contains(xml, uuid) {
+		t.Fatalf("bad zip xml: %s", xml)
 	}
 }
