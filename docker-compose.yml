@@ -30,7 +30,8 @@ services:
             - 127.0.0.1:8082:8080
         volumes:
             - ./data:/data
-            - ./config:/config:ro
+            - ./config:/config
+            - ./singbox_windows:/singbox:ro
             - ./app/config.php:/app/config.php:ro
             - ./docker-compose.yml:/docker-compose.yml:ro
             - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -53,6 +54,11 @@ services:
         hostname: bot
         container_name: bot-${VER}
         stop_grace_period: 5s
+        healthcheck:
+            test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+            interval: 30s
+            timeout: 5s
+            retries: 3
         networks:
             default:
                 ipv4_address: 10.10.0.18
