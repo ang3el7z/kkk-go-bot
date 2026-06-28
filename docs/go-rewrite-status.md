@@ -3,6 +3,7 @@
 ## Integrated
 
 - Go module and Docker build target.
+- Go skeleton: `cmd/kkk-go-bot` entrypoint plus `internal/app`, `config`, `storage`, `legacy`, `services`, `telegram`, `usecase`, `wireguard`, and `xray` packages.
 - SQLite migrations.
 - Legacy read-only importer with secret redaction.
 - Telegram webhook runtime.
@@ -25,7 +26,8 @@
 
 - GO-001 can close after inventory docs are merged.
 - GO-002 Compose/runtime contract implemented.
-- GO-003/004/006/008 are partially implemented by this integration.
+- GO-003 Go skeleton implemented.
+- GO-004/006/008 are partially implemented by this integration.
 - GO-005/007 importer exists but needs full legacy coverage.
 - GO-010 WireGuard parity implemented in Go. Runtime validation on Linux host still required.
 - GO-011 Xray parity implemented in Go. Runtime validation on Linux host still required.
