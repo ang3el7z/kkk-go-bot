@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -146,6 +147,9 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 			msg, err := b.wgMenu(ctx, "wg")
 			return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
 		}
+		if result, ok, err := b.handleLegacyWireGuardCallback(ctx, query.Data); ok || err != nil {
+			return result, err
+		}
 		return CallbackResult{Text: "Route not migrated yet", ShowAlert: true}, nil
 	}
 	if name == "menu" {
@@ -227,6 +231,107 @@ func (b *Bot) legacySmallService(ctx context.Context, name string) (MessageResul
 		return MessageResult{}, ok, err
 	}
 	return MessageResult{Text: result.Text, Keyboard: result.Keyboard, Document: result.Document}, true, nil
+}
+
+func (b *Bot) handleLegacyWireGuardCallback(ctx context.Context, data string) (CallbackResult, bool, error) {
+	switch {
+	case strings.HasPrefix(data, "/switchClient "):
+		id, err := b.resolveLegacyWGClientID(ctx, strings.TrimPrefix(data, "/switchClient "))
+		if err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		if err := b.wg.Toggle(ctx, id); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, wireGuardServiceName(id))
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case strings.HasPrefix(data, "/delete "):
+		id, err := b.resolveLegacyWGClientID(ctx, strings.TrimPrefix(data, "/delete "))
+		if err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		if err := b.wg.Delete(ctx, id); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, wireGuardServiceName(id))
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case strings.HasPrefix(data, "/download "):
+		id, err := b.resolveLegacyWGClientID(ctx, strings.TrimPrefix(data, "/download "))
+		if err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		filename, conf, err := b.wg.ClientConfig(ctx, id)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Document: &telegram.Document{Filename: filename, Content: []byte(conf)}}, true, nil
+	case strings.HasPrefix(data, "/qr "):
+		id, err := b.resolveLegacyWGClientID(ctx, strings.TrimPrefix(data, "/qr "))
+		if err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		filename, png, err := b.wg.ClientQR(ctx, id)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Photo: &telegram.Photo{Filename: filename, Content: png, Caption: "WireGuard QR"}}, true, nil
+	case strings.HasPrefix(data, "/switchAmnezia "):
+		instance := legacyWGInstance(strings.TrimPrefix(data, "/switchAmnezia "))
+		if err := b.requireServiceAvailable(ctx, instance); err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		if _, err := b.wg.ToggleAmnezia(ctx, instance); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, instance)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case strings.HasPrefix(data, "/switchEndpoint "):
+		instance := legacyWGInstance(strings.TrimPrefix(data, "/switchEndpoint "))
+		if err := b.requireServiceAvailable(ctx, instance); err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		if _, err := b.wg.ToggleEndpoint(ctx, instance); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, instance)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case strings.HasPrefix(data, "/switchTorrent "):
+		instance := legacyWGInstance(strings.TrimPrefix(data, "/switchTorrent "))
+		if err := b.requireServiceAvailable(ctx, instance); err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		if _, err := b.wg.ToggleBlockTorrent(ctx, instance); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, instance)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case strings.HasPrefix(data, "/switchExchange "):
+		instance := legacyWGInstance(strings.TrimPrefix(data, "/switchExchange "))
+		if err := b.requireServiceAvailable(ctx, instance); err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		if _, err := b.wg.ToggleBlockExchange(ctx, instance); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.wgMenu(ctx, instance)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case strings.HasPrefix(data, "/menu addpeer"):
+		instance := "wg"
+		if strings.Contains(data, " 1") {
+			instance = "wg1"
+		}
+		if err := b.requireServiceAvailable(ctx, instance); err != nil {
+			return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+		}
+		keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{
+			{{Text: "all traffic", Data: "wg:add:" + instance}},
+			{{Text: "subnet", Data: "wg:subnetadd:" + instance}},
+			{{Text: "back", Data: "/changeWG " + legacyWGNumber(instance)}},
+		}}
+		return CallbackResult{Text: "Menu -> Wireguard -> Add peer", Keyboard: keyboard}, true, nil
+	default:
+		return CallbackResult{}, false, nil
+	}
 }
 
 func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, data string) (CallbackResult, bool, error) {
@@ -740,17 +845,17 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 		return MessageResult{}, err
 	}
 	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{{
-		{Text: "Add peer", Data: "wg:add:" + instance},
-		{Text: fmt.Sprintf("Amnezia: %t", info.Amnezia), Data: "wg:amnezia:" + instance},
-		{Text: "Default AllowedIPs", Data: "wg:defaultallowedips:" + instance},
+		{Text: "add peer", Data: "/menu addpeer 0"},
+		{Text: fmt.Sprintf("Amnezia: %t", info.Amnezia), Data: "/switchAmnezia " + legacyWGNumber(instance)},
+		{Text: "default allowed IPs", Data: "wg:defaultallowedips:" + instance},
 	}}}
 	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-		{Text: fmt.Sprintf("Endpoint IP: %t", info.EndpointUseIP), Data: "wg:endpoint:" + instance},
-		{Text: fmt.Sprintf("Torrent: %t", info.BlockTorrent), Data: "wg:torrent:" + instance},
-		{Text: fmt.Sprintf("Exchange: %t", info.BlockExchange), Data: "wg:exchange:" + instance},
+		{Text: fmt.Sprintf("proxy ip: %t", info.EndpointUseIP), Data: "/switchEndpoint " + legacyWGNumber(instance)},
+		{Text: fmt.Sprintf("torrent: %t", info.BlockTorrent), Data: "/switchTorrent " + legacyWGNumber(instance)},
+		{Text: fmt.Sprintf("exchange: %t", info.BlockExchange), Data: "/switchExchange " + legacyWGNumber(instance)},
 	})
 	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-		{Text: "Add subnet", Data: "wg:subnetadd:" + instance},
+		{Text: "subnet", Data: "wg:subnetadd:" + instance},
 	})
 	lines := []string{"default allow=" + info.DefaultAllowedIPs}
 	if len(info.Subnets) > 0 {
@@ -788,10 +893,10 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 		}
 		lines = append(lines, fmt.Sprintf("%s %s %s", status, client.Name, strings.Join(details, " ")))
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
-			{Text: "toggle " + client.Name, Data: "wg:toggle:" + client.ID},
-			{Text: "QR", Data: "wg:qr:" + client.ID},
-			{Text: "download", Data: "wg:download:" + client.ID},
-			{Text: "delete", Data: "wg:delete:" + client.ID},
+			{Text: client.Name, Data: "/switchClient " + client.ID},
+			{Text: "show QR", Data: "/qr " + client.ID},
+			{Text: "download config", Data: "/download " + client.ID},
+			{Text: "delete", Data: "/delete " + client.ID},
 		})
 		keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{
 			{Text: "rename", Data: "wg:rename:" + client.ID},
@@ -803,6 +908,7 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 			{Text: "AllowedIPs", Data: "wg:allowedips:" + client.ID},
 		})
 	}
+	keyboard.Rows = append(keyboard.Rows, []telegram.InlineButton{{Text: "back", Data: "/menu"}})
 	text := "WireGuard " + instance
 	if len(lines) > 0 {
 		text += "\n\n" + strings.Join(lines, "\n")
@@ -1083,4 +1189,42 @@ func wireGuardServiceName(value string) string {
 		return "wg1"
 	}
 	return "wg"
+}
+
+func legacyWGInstance(value string) string {
+	if strings.HasPrefix(value, "1") || strings.HasPrefix(value, "wg1") {
+		return "wg1"
+	}
+	return "wg"
+}
+
+func legacyWGNumber(instance string) string {
+	if instance == "wg1" {
+		return "1"
+	}
+	return "0"
+}
+
+func (b *Bot) resolveLegacyWGClientID(ctx context.Context, value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if strings.Contains(value, ":") {
+		return value, nil
+	}
+	parts := strings.Split(value, "_")
+	idx, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return "", err
+	}
+	instance := "wg"
+	if len(parts) > 1 && parts[1] == "1" {
+		instance = "wg1"
+	}
+	clients, err := b.wg.List(ctx, instance)
+	if err != nil {
+		return "", err
+	}
+	if idx < 0 || idx >= len(clients) {
+		return "", fmt.Errorf("WireGuard client not found")
+	}
+	return clients[idx].ID, nil
 }
