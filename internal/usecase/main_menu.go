@@ -41,15 +41,15 @@ func (b *Bot) mainMenuText(ctx context.Context, services []storage.Service) stri
 	serviceLabels := []string{
 		wireGuardTitle(ctx, b.repo, pac, "wg"),
 		wireGuardTitle(ctx, b.repo, pac, "wg1"),
-		"Vless",
-		"NaiveProxy",
-		"OpenConnect",
+		i18n(pac, "xray"),
+		i18n(pac, "naive"),
+		i18n(pac, "ocserv"),
 		"Hysteria",
-		"MTProto",
-		"AdGuard",
-		"Shadowsocks",
+		i18n(pac, "mtproto"),
+		i18n(pac, "ad_title"),
+		i18n(pac, "sh_title"),
 		"DNSTT",
-		"Warp",
+		i18n(pac, "warp"),
 	}
 	serviceColumn := make([]string, 0, len(serviceNames))
 	portColumn := make([]string, 0, len(serviceNames))
@@ -117,26 +117,27 @@ func upstreamLikeMainKeyboard(available map[string]bool, pac map[string]any) *te
 		serviceButton("wg1", wireGuardButtonTitle(pac, "wg1"), "service:wg1"),
 	)
 	addRow(
-		serviceButton("xr", "Vless", "service:xr"),
-		serviceButton("np", "NaiveProxy", "service:np"),
+		serviceButton("xr", i18n(pac, "xray"), "service:xr"),
+		serviceButton("np", i18n(pac, "naive"), "service:np"),
 	)
 	addRow(
-		serviceButton("oc", "OpenConnect", "service:oc"),
-		serviceButton("tg", "MTProto", "service:tg"),
+		serviceButton("oc", i18n(pac, "ocserv"), "service:oc"),
+		serviceButton("tg", i18n(pac, "mtproto"), "service:tg"),
 	)
 	addRow(
-		serviceButton("ad", "AdGuard", "service:ad"),
-		serviceButton("wp", "Warp", "service:wp"),
+		serviceButton("ad", i18n(pac, "ad_title"), "service:ad"),
+		serviceButton("wp", i18n(pac, "warp"), "service:wp"),
 	)
 	addRow(
-		serviceButton("ss", "Shadowsocks", "service:ss"),
-		serviceButton("xr", "PAC", "service:pac"),
+		serviceButton("ss", i18n(pac, "sh_title"), "service:ss"),
+		serviceButton("xr", i18n(pac, "pac"), "service:pac"),
 	)
-	addRow(
-		serviceButton("hy", "Hysteria", "service:hy"),
-		serviceButton("dnstt", "DNSTT", "service:dnstt"),
-	)
-	addRow(telegram.InlineButton{Text: "Settings", Data: "service:config"})
+	dnsttButton := telegram.InlineButton{}
+	if boolValue(pac["showdnstt"]) {
+		dnsttButton = serviceButton("dnstt", "DNSTT", "service:dnstt")
+	}
+	addRow(serviceButton("hy", "Hysteria", "service:hy"), dnsttButton)
+	addRow(telegram.InlineButton{Text: i18n(pac, "config"), Data: "service:config"})
 	domain := stringValue(pac["domain"])
 	if domain == "" {
 		domain = envDefault("DOMAIN", envDefault("PUBLIC_IP", os.Getenv("IP")))
@@ -147,10 +148,10 @@ func upstreamLikeMainKeyboard(available map[string]bool, pac map[string]any) *te
 	}
 	donateButton := telegram.InlineButton{}
 	if donateURL != "" {
-		donateButton = telegram.InlineButton{Text: "donate", WebApp: donateURL}
+		donateButton = telegram.InlineButton{Text: i18n(pac, "donate"), WebApp: donateURL}
 	}
 	addRow(
-		telegram.InlineButton{Text: "chat", URL: "https://t.me/+4G3-Q4d_vFExODcy"},
+		telegram.InlineButton{Text: i18n(pac, "chat"), URL: "https://t.me/+4G3-Q4d_vFExODcy"},
 		donateButton,
 	)
 	return &telegram.InlineKeyboard{Rows: rows}
@@ -208,9 +209,9 @@ func portStatus(services map[string]storage.Service, name string) string {
 	case "wg1":
 		return dot(serviceEnabled(services, name)) + " " + envDefault("WG1PORT", "51821")
 	case "xr", "np", "oc":
-		return statusOn + " 443"
+		return dot(serviceEnabled(services, name)) + " 443"
 	case "hy":
-		port := envDefault("HYPORT", "")
+		port := hysteriaPort()
 		if port == "" {
 			return dot(false) + " port unavailable"
 		}
@@ -270,6 +271,10 @@ func envDefault(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func hysteriaPort() string {
+	return envDefault("HYPORT", "")
 }
 
 func branchSuffix() string {

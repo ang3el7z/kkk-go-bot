@@ -119,6 +119,9 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 	if result, ok, err := b.handleBackupCallback(ctx, query.From.ID, query.Data); ok || err != nil {
 		return result, err
 	}
+	if result, ok, err := b.handleSettingsCallback(ctx, query.Data); ok || err != nil {
+		return result, err
+	}
 	if result, ok, err := b.handleServiceManagementCallback(ctx, query.Data); ok || err != nil {
 		return result, err
 	}
@@ -841,19 +844,6 @@ func (b *Bot) moderationMenu(ctx context.Context) (MessageResult, error) {
 		lines = append(lines, fmt.Sprintf("log %s %dB", logFile.Name, logFile.Size))
 	}
 	return MessageResult{Text: strings.Join(lines, "\n"), Keyboard: keyboard.Build()}, nil
-}
-
-func (b *Bot) settingsMenu(ctx context.Context) (MessageResult, error) {
-	keyboard := NewMenuBuilder(2)
-	keyboard.Add("Logs / IP deny", "mod:menu")
-	keyboard.Add("Containers", "svc:menu")
-	keyboard.Add("Export backup", "backup:export")
-	keyboard.Add("Import backup", "backup:import")
-	keyboard.Add("Back", "service:menu")
-	return MessageResult{
-		Text:     "Settings\nLogs, IP deny list, containers, backup export/import.",
-		Keyboard: keyboard.Build(),
-	}, nil
 }
 
 func (b *Bot) pacMenu(ctx context.Context) (MessageResult, error) {

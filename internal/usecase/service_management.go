@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
+	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
 )
 
 type ServiceController interface {
@@ -31,6 +32,10 @@ var manageableServices = map[string]string{
 var manageableServiceOrder = []string{"wg", "wg1", "xr", "np", "oc", "tg", "ad", "wp", "ss", "dnstt", "hy"}
 
 func (b *Bot) handleServiceManagementCallback(ctx context.Context, data string) (CallbackResult, bool, error) {
+	if data == "svc:ports" {
+		msg, err := b.portsMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	}
 	if data == "svc:menu" {
 		msg, err := b.serviceManagementMenu(ctx)
 		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
@@ -81,12 +86,13 @@ func (b *Bot) handleServiceManagementCallback(ctx context.Context, data string) 
 }
 
 func (b *Bot) serviceManagementMenu(ctx context.Context) (MessageResult, error) {
+	pac := b.legacyPAC(ctx)
 	services, err := b.repo.ListServices(ctx)
 	if err != nil {
 		return MessageResult{}, err
 	}
 	byName := servicesByName(services)
-	lines := []string{"Settings -> Containers", ""}
+	lines := []string{"Settings -> " + i18n(pac, "container management"), ""}
 	keyboard := NewMenuBuilder(1)
 	for _, name := range orderedManageableServices(byName) {
 		service := byName[name]
@@ -107,8 +113,41 @@ func (b *Bot) serviceManagementMenu(ctx context.Context) (MessageResult, error) 
 	if len(lines) == 2 {
 		lines = append(lines, "no manageable services")
 	}
-	keyboard.Add("Back", "service:config")
+	keyboard.Add(i18n(pac, "back"), "service:config")
 	return MessageResult{Text: strings.Join(lines, "\n"), Keyboard: keyboard.Build()}, nil
+}
+
+func (b *Bot) portsMenu(ctx context.Context) (MessageResult, error) {
+	pac := b.legacyPAC(ctx)
+	services, err := b.repo.ListServices(ctx)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	byName := servicesByName(services)
+	row := func(name, port, title string) telegram.InlineButton {
+		return telegram.InlineButton{
+			Text: dot(serviceEnabled(byName, name)) + " " + port + " " + title,
+			Data: "svc:toggle:" + name,
+		}
+	}
+	hyPort := hysteriaPort()
+	hyText := dot(hyPort != "" && serviceEnabled(byName, "hy")) + " "
+	if hyPort == "" {
+		hyText += "port unavailable hysteria"
+	} else {
+		hyText += hyPort + " hysteria"
+	}
+	keyboard := &telegram.InlineKeyboard{Rows: [][]telegram.InlineButton{
+		{row("wg", envDefault("WGPORT", "51820"), "Wireguard")},
+		{row("wg1", envDefault("WG1PORT", "51821"), "Wireguard")},
+		{row("tg", envDefault("TGPORT", "4443"), "MTProto ")},
+		{row("ad", "853", "AdguardHome DoT")},
+		{row("ss", envDefault("SSPORT", "8388"), "Shadowsocks")},
+		{row("dnstt", "53", "dnstt")},
+		{{Text: hyText, Data: "svc:toggle:hy"}},
+		{{Text: i18n(pac, "back"), Data: "service:config"}},
+	}}
+	return MessageResult{Text: "Settings -> Ports", Keyboard: keyboard}, nil
 }
 
 func orderedManageableServices(services map[string]storage.Service) []string {

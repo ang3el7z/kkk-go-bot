@@ -163,7 +163,7 @@ func TestSettingsExposeContainerManagement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Keyboard == nil || result.Keyboard.Rows[0][1].Data != "svc:menu" {
+	if result.Keyboard == nil || !keyboardHasCallback(result.Keyboard, "svc:menu") {
 		t.Fatalf("missing container management button: %+v", result.Keyboard)
 	}
 }
@@ -269,4 +269,15 @@ func TestSmallServiceMenuUsesImportedStateAndRedactsSecrets(t *testing.T) {
 	if result.Keyboard == nil || len(result.Keyboard.Rows) != 1 || result.Keyboard.Rows[0][0].Data != "service:menu" {
 		t.Fatalf("missing back keyboard: %+v", result.Keyboard)
 	}
+}
+
+func keyboardHasCallback(keyboard *telegram.InlineKeyboard, data string) bool {
+	for _, row := range keyboard.Rows {
+		for _, button := range row {
+			if button.Data == data {
+				return true
+			}
+		}
+	}
+	return false
 }
