@@ -49,6 +49,15 @@ func TestImporterReadsLegacyPHPConfigSafely(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "pac.json"), `{}`)
 	writeFile(t, filepath.Join(dir, "hwid.json"), `{}`)
 	writeFile(t, filepath.Join(dir, "xray.json"), `{"inbounds":[{"settings":{"clients":[]}}]}`)
+	writeFile(t, filepath.Join(dir, "xray.stats"), `{"users":{}}`)
+	writeFile(t, filepath.Join(dir, "mtprotosecret"), `secret-value`)
+	writeFile(t, filepath.Join(dir, "mtprotodomain"), `tg.example`)
+	writeFile(t, filepath.Join(dir, "ssserver.json"), `{"password":"secret"}`)
+	certs := filepath.Join(dir, "certs")
+	if err := os.MkdirAll(certs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(certs, "cert_private"), `private-key`)
 
 	repo, err := storage.OpenSQLite(filepath.Join(dir, "bot.db"))
 	if err != nil {
@@ -58,7 +67,7 @@ func TestImporterReadsLegacyPHPConfigSafely(t *testing.T) {
 	if err := repo.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
-	err = NewImporter(config.Config{ConfigDir: dir, LegacyPHPPath: phpPath}, repo).Import(ctx)
+	err = NewImporter(config.Config{ConfigDir: dir, CertsDir: certs, LegacyPHPPath: phpPath}, repo).Import(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +80,22 @@ func TestImporterReadsLegacyPHPConfigSafely(t *testing.T) {
 	}
 	if _, ok, err := repo.GetSetting(ctx, "legacy.config_php.key"); err != nil || ok {
 		t.Fatalf("secret key imported: ok=%v err=%v", ok, err)
+	}
+	mtproto, ok, err := repo.GetSetting(ctx, "legacy.mtprotosecret")
+	if err != nil || !ok || !mtproto.Secret || mtproto.ValueJSON != `"secret-value"` {
+		t.Fatalf("mtproto secret not imported safely: ok=%v err=%v value=%+v", ok, err, mtproto)
+	}
+	domain, ok, err := repo.GetSetting(ctx, "legacy.mtprotodomain")
+	if err != nil || !ok || domain.Secret || domain.ValueJSON != `"tg.example"` {
+		t.Fatalf("mtproto domain not imported: ok=%v err=%v value=%+v", ok, err, domain)
+	}
+	ss, ok, err := repo.GetSetting(ctx, "legacy.ssserver.json")
+	if err != nil || !ok || !ss.Secret || !strings.Contains(ss.ValueJSON, "password") {
+		t.Fatalf("ss config not imported as secret: ok=%v err=%v value=%+v", ok, err, ss)
+	}
+	cert, ok, err := repo.GetSetting(ctx, "legacy.cert_private")
+	if err != nil || !ok || !cert.Secret {
+		t.Fatalf("cert private not imported as secret: ok=%v err=%v value=%+v", ok, err, cert)
 	}
 	redacted, ok, err := repo.GetSetting(ctx, "legacy.config_php.redacted")
 	if err != nil || !ok || strings.Contains(redacted.ValueJSON, "telegram-token") {

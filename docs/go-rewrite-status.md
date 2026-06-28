@@ -7,6 +7,7 @@
 - SQLite migrations.
 - SQLite migration runner: versioned `schema_migrations`, idempotent table creation, and indexes for menu services, clients, pending operations, and secret settings.
 - Legacy read-only importer with secret redaction.
+- Legacy state importer: PAC, WG clients/server configs, HWID, Xray users/stats, subscription templates, service configs, deny/include files, MTProto/DNSTT/cert/OC/SS/Naive/Hysteria secret settings.
 - Legacy config bridge: optional `app/config.php` import for admins and non-secret scalar settings, with Telegram token/password/secret values redacted and kept out of Go runtime config.
 - Telegram webhook runtime.
 - Telegram adapter: update models, message/callback dispatch, HTML messages, inline keyboards, document/photo uploads, callback answers, and API error validation.
@@ -34,7 +35,7 @@
 - GO-006 SQLite migrations implemented.
 - GO-008 is partially implemented by this integration.
 - GO-005 Legacy config bridge implemented.
-- GO-007 importer exists but needs full legacy coverage.
+- GO-007 legacy state import implemented.
 - GO-010 WireGuard parity implemented in Go. Runtime validation on Linux host still required.
 - GO-011 Xray parity implemented in Go. Runtime validation on Linux host still required.
 - GO-012 PAC/subscription parity implemented in Go. Runtime validation on Linux host still required.

@@ -31,6 +31,7 @@ services:
         volumes:
             - ./data:/data
             - ./config:/config
+            - ./certs:/certs:ro
             - ./singbox_windows:/singbox:ro
             - ./app/config.php:/app/config.php:ro
             - ./docker-compose.yml:/docker-compose.yml:ro
@@ -42,6 +43,7 @@ services:
             DB_PATH: /data/bot.db
             HTTP_ADDR: :8080
             CONFIG_DIR: /config
+            CERTS_DIR: /certs
             LEGACY_PHP_CONFIG: /app/config.php
             COMPOSE_PATH: /docker-compose.yml
             PROJECT_NAME: kkk-go-bot

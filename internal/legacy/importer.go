@@ -44,10 +44,54 @@ func (i *Importer) Import(ctx context.Context) error {
 	if err := i.importJSONSetting(ctx, "hwid", filepath.Join(i.cfg.ConfigDir, "hwid.json")); err != nil {
 		return err
 	}
+	if err := i.importJSONSetting(ctx, "xray.stats", filepath.Join(i.cfg.ConfigDir, "xray.stats")); err != nil {
+		return err
+	}
 	if err := i.importXray(ctx, filepath.Join(i.cfg.ConfigDir, "xray.json")); err != nil {
 		return err
 	}
+	for _, item := range i.fileImports() {
+		if err := i.importFileSetting(ctx, item.key, item.path, item.secret); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+type fileImport struct {
+	key    string
+	path   string
+	secret bool
+}
+
+func (i *Importer) fileImports() []fileImport {
+	cfg := i.cfg.ConfigDir
+	certs := i.cfg.CertsDir
+	return []fileImport{
+		{key: "ocserv.passwd", path: filepath.Join(cfg, "ocserv.passwd"), secret: true},
+		{key: "mtprotosecret", path: filepath.Join(cfg, "mtprotosecret"), secret: true},
+		{key: "mtprotodomain", path: filepath.Join(cfg, "mtprotodomain")},
+		{key: "dnstt.server_key", path: filepath.Join(cfg, "dnstt", "server.key"), secret: true},
+		{key: "dnstt.server_pub", path: filepath.Join(cfg, "dnstt", "server.pub")},
+		{key: "cert_private", path: filepath.Join(certs, "cert_private"), secret: true},
+		{key: "cert_public", path: filepath.Join(certs, "cert_public")},
+		{key: "adguard.yaml", path: filepath.Join(cfg, "AdGuardHome.yaml"), secret: true},
+		{key: "hysteria.yaml", path: filepath.Join(cfg, "hysteria.yaml"), secret: true},
+		{key: "ocserv.conf", path: filepath.Join(cfg, "ocserv.conf")},
+		{key: "caddyfile", path: filepath.Join(cfg, "Caddyfile"), secret: true},
+		{key: "ssserver.json", path: filepath.Join(cfg, "ssserver.json"), secret: true},
+		{key: "sslocal.json", path: filepath.Join(cfg, "sslocal.json"), secret: true},
+		{key: "nginx.conf", path: filepath.Join(cfg, "nginx.conf")},
+		{key: "upstream.conf", path: filepath.Join(cfg, "upstream.conf")},
+		{key: "location.conf", path: filepath.Join(cfg, "location.conf")},
+		{key: "override.conf", path: filepath.Join(cfg, "override.conf")},
+		{key: "unit.json", path: filepath.Join(cfg, "unit.json")},
+		{key: "clash.template", path: filepath.Join(cfg, "clash.json")},
+		{key: "sing.template", path: filepath.Join(cfg, "sing.json")},
+		{key: "v2ray.template", path: filepath.Join(cfg, "v2ray.json")},
+		{key: "include.conf", path: filepath.Join(cfg, "include.conf")},
+		{key: "deny", path: filepath.Join(cfg, "deny")},
+	}
 }
 
 func (i *Importer) importWGConfig(ctx context.Context, instance, path string) error {
@@ -107,6 +151,21 @@ func (i *Importer) importJSONSetting(ctx context.Context, key, path string) erro
 		return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + key + ".raw", ValueJSON: mustJSON(string(data))})
 	}
 	return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + key, ValueJSON: string(data)})
+}
+
+func (i *Importer) importFileSetting(ctx context.Context, key, path string, secret bool) error {
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	value := mustJSON(string(data))
+	if json.Valid(data) {
+		value = string(data)
+	}
+	return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy." + key, ValueJSON: value, Secret: secret})
 }
 
 func (i *Importer) importXray(ctx context.Context, path string) error {
