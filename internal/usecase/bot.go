@@ -115,6 +115,12 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 	}
 	name, ok := strings.CutPrefix(query.Data, "service:")
 	if !ok {
+		if msg, ok, err := b.handleLegacyMenuCallback(ctx, query.Data); ok || err != nil {
+			if err != nil {
+				return CallbackResult{}, err
+			}
+			return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard, Document: msg.Document}, nil
+		}
 		if query.Data == "/menu wg" || strings.HasPrefix(query.Data, "/menu wg ") || query.Data == "/changeWG 0" {
 			if err := b.requireServiceAvailable(ctx, "wg"); err != nil {
 				return CallbackResult{Text: err.Error(), ShowAlert: true}, nil
@@ -165,6 +171,62 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
 	}
 	return CallbackResult{Text: service.DisplayName, ShowAlert: false}, nil
+}
+
+func (b *Bot) handleLegacyMenuCallback(ctx context.Context, data string) (MessageResult, bool, error) {
+	switch data {
+	case "/xray":
+		if err := b.requireServiceAvailable(ctx, "xr"); err != nil {
+			return MessageResult{Text: err.Error()}, true, nil
+		}
+		msg, err := b.xrayMenu(ctx)
+		return msg, true, err
+	case "/menu adguard":
+		if err := b.requireServiceAvailable(ctx, "ad"); err != nil {
+			return MessageResult{Text: err.Error()}, true, nil
+		}
+		msg, err := b.adguardMenu(ctx)
+		return msg, true, err
+	case "/mtproto":
+		return b.legacySmallService(ctx, "tg")
+	case "/warp":
+		return b.legacySmallService(ctx, "wp")
+	case "/dnstt":
+		return b.legacySmallService(ctx, "dnstt")
+	case "/menu naive":
+		return b.legacySmallService(ctx, "np")
+	case "/menu oc":
+		return b.legacySmallService(ctx, "oc")
+	case "/menu ss":
+		return b.legacySmallService(ctx, "ss")
+	case "/menu hy":
+		return b.legacySmallService(ctx, "hy")
+	case "/pacMenu 0":
+		if err := b.requireServiceAvailable(ctx, "xr"); err != nil {
+			return MessageResult{Text: err.Error()}, true, nil
+		}
+		return MessageResult{Text: "PAC", Keyboard: (&MenuBuilder{columns: 1}).Build()}, true, nil
+	case "/menu config":
+		msg, err := b.moderationMenu(ctx)
+		if err != nil {
+			return MessageResult{}, true, err
+		}
+		msg.Text = "Settings\n\n" + msg.Text
+		return msg, true, nil
+	default:
+		return MessageResult{}, false, nil
+	}
+}
+
+func (b *Bot) legacySmallService(ctx context.Context, name string) (MessageResult, bool, error) {
+	if err := b.requireServiceAvailable(ctx, name); err != nil {
+		return MessageResult{Text: err.Error()}, true, nil
+	}
+	result, ok, err := b.smallServiceMenu(ctx, name)
+	if err != nil || !ok {
+		return MessageResult{}, ok, err
+	}
+	return MessageResult{Text: result.Text, Keyboard: result.Keyboard, Document: result.Document}, true, nil
 }
 
 func (b *Bot) handleWireGuardCallback(ctx context.Context, telegramID int64, data string) (CallbackResult, bool, error) {
@@ -661,15 +723,15 @@ func (b *Bot) menu(ctx context.Context) (MessageResult, error) {
 	if err != nil {
 		return MessageResult{}, err
 	}
-	builder := NewMenuBuilder(2)
+	available := make(map[string]bool, len(services))
 	for _, service := range services {
-		builder.Add(service.DisplayName, callbackForService(service.Name))
+		available[service.Name] = true
 	}
-	keyboard := builder.Build()
+	keyboard := legacyMainKeyboard(available)
 	if keyboard == nil {
 		return MessageResult{Text: "No enabled services found in compose."}, nil
 	}
-	return MessageResult{Text: "kkk-go-bot menu", Keyboard: keyboard}, nil
+	return MessageResult{Text: "Menu", Keyboard: keyboard}, nil
 }
 
 func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error) {
@@ -833,6 +895,57 @@ func callbackForService(name string) string {
 	default:
 		return "service:" + name
 	}
+}
+
+func legacyMainKeyboard(available map[string]bool) *telegram.InlineKeyboard {
+	rows := [][]telegram.InlineButton{}
+	addRow := func(buttons ...telegram.InlineButton) {
+		row := make([]telegram.InlineButton, 0, len(buttons))
+		for _, button := range buttons {
+			if button.Text != "" {
+				row = append(row, button)
+			}
+		}
+		if len(row) > 0 {
+			rows = append(rows, row)
+		}
+	}
+	serviceButton := func(service, text, data string) telegram.InlineButton {
+		if !available[service] {
+			return telegram.InlineButton{}
+		}
+		return telegram.InlineButton{Text: text, Data: data}
+	}
+	addRow(
+		serviceButton("wg", "Wireguard", "/changeWG 0"),
+		serviceButton("wg1", "Wireguard", "/changeWG 1"),
+	)
+	addRow(
+		serviceButton("xr", "Vless", "/xray"),
+		serviceButton("np", "NaiveProxy", "/menu naive"),
+	)
+	addRow(
+		serviceButton("oc", "OpenConnect", "/menu oc"),
+		serviceButton("tg", "MTProto", "/mtproto"),
+	)
+	addRow(
+		serviceButton("ad", "AdGuard", "/menu adguard"),
+		serviceButton("wp", "Warp", "/warp"),
+	)
+	addRow(
+		serviceButton("ss", "Shadowsocks", "/menu ss"),
+		serviceButton("xr", "PAC", "/pacMenu 0"),
+	)
+	addRow(
+		serviceButton("hy", "Hysteria", "/menu hy"),
+		serviceButton("dnstt", "DNSTT", "/dnstt"),
+	)
+	addRow(telegram.InlineButton{Text: "Settings", Data: "/menu config"})
+	addRow(telegram.InlineButton{Text: "chat", URL: "https://t.me/+4G3-Q4d_vFExODcy"})
+	if len(rows) == 2 {
+		return nil
+	}
+	return &telegram.InlineKeyboard{Rows: rows}
 }
 
 func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {
