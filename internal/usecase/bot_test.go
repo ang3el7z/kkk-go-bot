@@ -112,8 +112,8 @@ func TestMenuOnlyUsesRepositoryServices(t *testing.T) {
 	if result.Keyboard == nil || len(result.Keyboard.Rows) != 5 {
 		t.Fatalf("unexpected keyboard: %+v", result.Keyboard)
 	}
-	if result.Keyboard.Rows[0][0].Data != "/changeWG 0" || result.Keyboard.Rows[1][0].Data != "/xray" {
-		t.Fatalf("unexpected legacy callbacks: %+v", result.Keyboard)
+	if result.Keyboard.Rows[0][0].Data != "service:wg" || result.Keyboard.Rows[1][0].Data != "service:xr" {
+		t.Fatalf("unexpected go-native callbacks: %+v", result.Keyboard)
 	}
 }
 

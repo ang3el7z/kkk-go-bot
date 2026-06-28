@@ -4,19 +4,19 @@ Source: `mercurykd/vpnbot` `app/bot.php`.
 
 ## Product Rule
 
-The Go rewrite must preserve the upstream Telegram surface unless a change is explicitly intentional:
+The Go rewrite must preserve the upstream Telegram behavior and menu shape while using Go-native internals:
 
 - same primary menu layout;
 - same visible service names;
-- same legacy `callback_data` routes where practical;
+- Go-native `callback_data` routes, no PHP compatibility layer;
 - same feature behavior backed by DB instead of JSON/runtime files;
 - hidden buttons only when the related service/container is disabled or unavailable.
 
 ## Current Gap Summary
 
 - Upstream exposes about 214 callback route variants in `app/bot.php`.
-- Current Go implementation covers the core service paths, but not full Telegram parity.
-- The previous Go menu used new callbacks such as `wg:*` and `xray:*`; upstream uses callbacks such as `/changeWG 0`, `/xray`, `/menu naive`, `/menu config`.
+- Current Go implementation covers the core service paths, but not full Telegram behavior parity.
+- The previous parity plan incorrectly treated PHP callback names such as `/changeWG 0`, `/xray`, `/menu naive`, `/menu config` as targets. They are now reference points only; Go keeps equivalent flows through `service:*`, `wg:*`, `xray:*`, `ad:*`, `mod:*`, and `backup:*` routes.
 
 ## Main Menu Parity
 
@@ -35,9 +35,9 @@ Go keeps this order and hides service buttons when the service is not enabled+av
 
 ## Remaining Parity Work
 
-- WireGuard submenu: align visible rows/text/callbacks with `/changeWG`, `/menu wg`, `/add`, `/switchClient`, `/qr`, `/download`, `/delete`, `/rename`, `/timer`, `/subnet`.
-- Xray submenu: align `/xray`, `/userXr`, `/addXrUser`, `/listXr`, `/switchXr`, `/timerXr`, `/templates`, `/routes`, HWID, transport, stats.
+- WireGuard submenu: align visible rows/text and behavior with upstream add/switch/QR/download/delete/rename/timer/subnet flows, implemented via `wg:*` callbacks.
+- Xray submenu: align visible rows/text and behavior with upstream users/add/list/switch/timer/templates/routes/HWID/transport/stats flows, implemented via `xray:*` callbacks.
 - Settings submenu: restore upstream settings surface: ports, logs, IP deny/allow, language, export/import/backup, update, restart, admins, SSL/domain.
-- PAC/routing menus: restore `/pacMenu`, `/routes`, route list editors, template download/default/copy/add/delete.
+- PAC/routing menus: restore subscription and route/template editor behavior through Go-native routes.
 - Smaller service menus: replace summary-only screens with upstream mutation flows for MTProto, NaiveProxy, OpenConnect, Shadowsocks, Hysteria, DNSTT, Warp.
 - Message text/i18n: restore upstream Russian/English labels instead of new English-only text.
