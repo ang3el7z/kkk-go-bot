@@ -83,6 +83,14 @@ func (i *Importer) importPHPConfig(ctx context.Context) error {
 			return err
 		}
 	}
+	for key, value := range parsePHPScalars(text) {
+		if isSecretKey(key) {
+			continue
+		}
+		if err := i.repo.SetSetting(ctx, storage.Setting{Key: "legacy.config_php." + key, ValueJSON: mustJSON(value)}); err != nil {
+			return err
+		}
+	}
 	redacted := redactPHPConfig(text)
 	return i.repo.SetSetting(ctx, storage.Setting{Key: "legacy.config_php.redacted", ValueJSON: mustJSON(redacted)})
 }
@@ -229,10 +237,9 @@ func parseAdminIDs(text string) []int64 {
 
 func redactPHPConfig(text string) string {
 	lines := strings.Split(text, "\n")
-	secretKeys := []string{"key", "token", "password", "passwd", "secret"}
 	for idx, line := range lines {
 		lower := strings.ToLower(line)
-		for _, key := range secretKeys {
+		for _, key := range []string{"key", "token", "password", "passwd", "secret"} {
 			if strings.Contains(lower, key) && strings.Contains(line, "=>") {
 				lines[idx] = regexp.MustCompile(`=>\s*['"][^'"]*['"]`).ReplaceAllString(line, `=> '***REDACTED***'`)
 				break
@@ -240,6 +247,34 @@ func redactPHPConfig(text string) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+func parsePHPScalars(text string) map[string]string {
+	re := regexp.MustCompile(`['"]([A-Za-z0-9_.-]+)['"]\s*=>\s*(?:['"]([^'"]*)['"]|(-?\d+)|\b(true|false)\b)`)
+	values := map[string]string{}
+	for _, match := range re.FindAllStringSubmatch(text, -1) {
+		value := match[2]
+		if value == "" {
+			value = match[3]
+		}
+		if value == "" {
+			value = match[4]
+		}
+		if match[1] != "" && value != "" {
+			values[match[1]] = value
+		}
+	}
+	return values
+}
+
+func isSecretKey(key string) bool {
+	key = strings.ToLower(key)
+	for _, part := range []string{"key", "token", "password", "passwd", "secret"} {
+		if strings.Contains(key, part) {
+			return true
+		}
+	}
+	return false
 }
 
 func mustJSON(value string) string {

@@ -6,6 +6,7 @@
 - Go skeleton: `cmd/kkk-go-bot` entrypoint plus `internal/app`, `config`, `storage`, `legacy`, `services`, `telegram`, `usecase`, `wireguard`, and `xray` packages.
 - SQLite migrations.
 - Legacy read-only importer with secret redaction.
+- Legacy config bridge: optional `app/config.php` import for admins and non-secret scalar settings, with Telegram token/password/secret values redacted and kept out of Go runtime config.
 - Telegram webhook runtime.
 - Telegram adapter: update models, message/callback dispatch, HTML messages, inline keyboards, document/photo uploads, callback answers, and API error validation.
 - Admin bootstrap and `/id`.
@@ -30,7 +31,8 @@
 - GO-003 Go skeleton implemented.
 - GO-004 Telegram adapter implemented.
 - GO-006/008 are partially implemented by this integration.
-- GO-005/007 importer exists but needs full legacy coverage.
+- GO-005 Legacy config bridge implemented.
+- GO-007 importer exists but needs full legacy coverage.
 - GO-010 WireGuard parity implemented in Go. Runtime validation on Linux host still required.
 - GO-011 Xray parity implemented in Go. Runtime validation on Linux host still required.
 - GO-012 PAC/subscription parity implemented in Go. Runtime validation on Linux host still required.
