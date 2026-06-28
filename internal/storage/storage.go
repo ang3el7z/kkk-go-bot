@@ -65,15 +65,18 @@ type Repository interface {
 	IsAdmin(ctx context.Context, telegramID int64) (bool, error)
 	ListAdmins(ctx context.Context) ([]Admin, error)
 	UpsertService(ctx context.Context, service Service) error
+	ListServices(ctx context.Context) ([]Service, error)
 	Service(ctx context.Context, name string) (Service, bool, error)
 	MenuServices(ctx context.Context) ([]Service, error)
 	SetSetting(ctx context.Context, setting Setting) error
 	GetSetting(ctx context.Context, key string) (Setting, bool, error)
+	ListSettings(ctx context.Context, includeSecrets bool) ([]Setting, error)
 	SaveClient(ctx context.Context, client Client) error
 	ListClients(ctx context.Context, protocol string) ([]Client, error)
 	DeleteClient(ctx context.Context, id string) error
 	SaveWireGuardServer(ctx context.Context, server WireGuardServer) error
 	GetWireGuardServer(ctx context.Context, instance string) (WireGuardServer, bool, error)
+	ListWireGuardServers(ctx context.Context) ([]WireGuardServer, error)
 	SetPendingOperation(ctx context.Context, op PendingOperation) error
 	GetPendingOperation(ctx context.Context, telegramID int64) (PendingOperation, bool, error)
 	ClearPendingOperation(ctx context.Context, telegramID int64) error

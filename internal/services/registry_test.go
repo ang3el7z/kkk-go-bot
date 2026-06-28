@@ -25,6 +25,13 @@ func (m *memoryRepo) UpsertService(_ context.Context, service storage.Service) e
 	m.services[service.Name] = service
 	return nil
 }
+func (m *memoryRepo) ListServices(context.Context) ([]storage.Service, error) {
+	values := make([]storage.Service, 0, len(m.services))
+	for _, service := range m.services {
+		values = append(values, service)
+	}
+	return values, nil
+}
 func (m *memoryRepo) Service(_ context.Context, name string) (storage.Service, bool, error) {
 	service, ok := m.services[name]
 	return service, ok, nil
@@ -33,6 +40,9 @@ func (m *memoryRepo) MenuServices(context.Context) ([]storage.Service, error) { 
 func (m *memoryRepo) SetSetting(context.Context, storage.Setting) error       { return nil }
 func (m *memoryRepo) GetSetting(context.Context, string) (storage.Setting, bool, error) {
 	return storage.Setting{}, false, nil
+}
+func (m *memoryRepo) ListSettings(context.Context, bool) ([]storage.Setting, error) {
+	return nil, nil
 }
 func (m *memoryRepo) SaveClient(context.Context, storage.Client) error { return nil }
 func (m *memoryRepo) ListClients(context.Context, string) ([]storage.Client, error) {
@@ -44,6 +54,9 @@ func (m *memoryRepo) SaveWireGuardServer(context.Context, storage.WireGuardServe
 }
 func (m *memoryRepo) GetWireGuardServer(context.Context, string) (storage.WireGuardServer, bool, error) {
 	return storage.WireGuardServer{}, false, nil
+}
+func (m *memoryRepo) ListWireGuardServers(context.Context) ([]storage.WireGuardServer, error) {
+	return nil, nil
 }
 func (m *memoryRepo) SetPendingOperation(context.Context, storage.PendingOperation) error {
 	return nil

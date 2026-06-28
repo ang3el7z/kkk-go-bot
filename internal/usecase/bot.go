@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/adguard"
+	"github.com/ang3el7z/kkk-go-bot/internal/backup"
 	"github.com/ang3el7z/kkk-go-bot/internal/moderation"
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
@@ -39,6 +40,7 @@ func NewBot(repo storage.Repository, wg *wireguard.Manager, xr *xray.Manager, ex
 type MessageResult struct {
 	Text     string
 	Keyboard *telegram.InlineKeyboard
+	Document *telegram.Document
 }
 
 type CallbackResult struct {
@@ -74,6 +76,22 @@ func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageR
 		return b.xrayMenu(ctx)
 	case "/logs", "/deny", "/ip":
 		return b.moderationMenu(ctx)
+	case "/backup", "/export":
+		data, err := backup.Export(ctx, b.repo, false)
+		if err != nil {
+			return MessageResult{}, err
+		}
+		return MessageResult{Text: "backup exported", Document: &telegram.Document{Filename: "kkk-go-bot-backup.json", Content: data}}, nil
+	case "/import":
+		if err := b.repo.SetPendingOperation(ctx, storage.PendingOperation{
+			TelegramID:  msg.From.ID,
+			Operation:   "backup_import",
+			PayloadJSON: "{}",
+			ExpiresAt:   time.Now().UTC().Add(15 * time.Minute),
+		}); err != nil {
+			return MessageResult{}, err
+		}
+		return MessageResult{Text: "Paste backup JSON within 15 minutes."}, nil
 	default:
 		return MessageResult{Text: "Unknown command. Use /menu."}, nil
 	}
@@ -353,6 +371,11 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 		if err == nil {
 			result, err := b.moderationMenu(ctx)
 			return result, true, err
+		}
+	case "backup_import":
+		err = backup.Import(ctx, b.repo, []byte(msg.Text), false)
+		if err == nil {
+			return MessageResult{Text: "Backup imported"}, true, nil
 		}
 	default:
 		return MessageResult{Text: "Unknown pending operation"}, true, nil

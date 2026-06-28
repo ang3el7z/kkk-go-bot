@@ -223,6 +223,9 @@ func handleUpdate(ctx context.Context, bot *usecase.Bot, client telegram.Client,
 		if err != nil {
 			return err
 		}
+		if result.Document != nil {
+			return client.SendDocument(update.Message.Chat.ID, result.Document.Filename, result.Document.Content)
+		}
 		return client.SendMessage(update.Message.Chat.ID, result.Text, result.Keyboard)
 	case update.CallbackQuery != nil:
 		result, err := bot.HandleCallback(ctx, *update.CallbackQuery)

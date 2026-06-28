@@ -23,12 +23,13 @@
 - Smaller service adapters: MTProto, Shadowsocks, SS local proxy, OpenConnect, NaiveProxy, Hysteria, DNSTT, and Warp menu adapters summarize imported DB state without leaking secret values.
 - AdGuard use cases: YAML-backed status menu plus upstream DNS add/delete flows with DB legacy setting sync.
 - Logs/IP moderation/HWID: Xray HWID controls plus moderation menu for deny IP/CIDR add/remove/clear and log list/tail/clear.
+- Backup/export/import v2: DB snapshot export/import for admins, services, non-secret settings, clients, and WireGuard server configs; Telegram `/backup` document export and `/import` JSON paste flow.
 
 ## Remaining For Full Parity
 
 - PAC/routing list editors and remote list updates.
 - Service-specific handlers: remaining mutation flows for smaller services.
-- Updater/backup/import-export.
+- Updater.
 - DB-owned renderers for config files and reload commands.
 
 ## GitHub Issue Mapping
@@ -48,4 +49,5 @@
 - GO-013 Smaller service adapters implemented.
 - GO-014 AdGuard use cases implemented.
 - GO-015 Logs, IP deny, and HWID limits implemented.
-- GO-016..GO-018 remain implementation work for parity/cutover.
+- GO-016 Backup/export/import v2 implemented.
+- GO-017..GO-018 remain implementation work for parity/cutover.

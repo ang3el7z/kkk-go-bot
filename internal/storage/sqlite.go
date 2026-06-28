@@ -230,6 +230,23 @@ func (s *SQLite) Service(ctx context.Context, name string) (Service, bool, error
 	return service, err == nil, err
 }
 
+func (s *SQLite) ListServices(ctx context.Context) ([]Service, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT name, display_name, enabled, available, availability_reason, menu_group, sort_order, updated_at FROM services ORDER BY sort_order, name`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var services []Service
+	for rows.Next() {
+		service, err := scanService(rows)
+		if err != nil {
+			return nil, err
+		}
+		services = append(services, service)
+	}
+	return services, rows.Err()
+}
+
 func (s *SQLite) MenuServices(ctx context.Context) ([]Service, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT name, display_name, enabled, available, availability_reason, menu_group, sort_order, updated_at
@@ -276,6 +293,32 @@ func (s *SQLite) GetSetting(ctx context.Context, key string) (Setting, bool, err
 	setting.Secret = secret != 0
 	setting.UpdatedAt, _ = parseTime(updated)
 	return setting, true, nil
+}
+
+func (s *SQLite) ListSettings(ctx context.Context, includeSecrets bool) ([]Setting, error) {
+	query := `SELECT key, value_json, secret, updated_at FROM settings`
+	if !includeSecrets {
+		query += ` WHERE secret = 0`
+	}
+	query += ` ORDER BY key`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var settings []Setting
+	for rows.Next() {
+		var setting Setting
+		var secret int
+		var updated string
+		if err := rows.Scan(&setting.Key, &setting.ValueJSON, &secret, &updated); err != nil {
+			return nil, err
+		}
+		setting.Secret = secret != 0
+		setting.UpdatedAt, _ = parseTime(updated)
+		settings = append(settings, setting)
+	}
+	return settings, rows.Err()
 }
 
 func (s *SQLite) SaveClient(ctx context.Context, client Client) error {
@@ -356,6 +399,25 @@ func (s *SQLite) GetWireGuardServer(ctx context.Context, instance string) (WireG
 	}
 	server.UpdatedAt, _ = parseTime(updated)
 	return server, true, nil
+}
+
+func (s *SQLite) ListWireGuardServers(ctx context.Context) ([]WireGuardServer, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT instance, config_json, updated_at FROM wireguard_servers ORDER BY instance`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var servers []WireGuardServer
+	for rows.Next() {
+		var server WireGuardServer
+		var updated string
+		if err := rows.Scan(&server.Instance, &server.ConfigJSON, &updated); err != nil {
+			return nil, err
+		}
+		server.UpdatedAt, _ = parseTime(updated)
+		servers = append(servers, server)
+	}
+	return servers, rows.Err()
 }
 
 func (s *SQLite) SetPendingOperation(ctx context.Context, op PendingOperation) error {

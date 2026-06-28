@@ -34,6 +34,9 @@ func (r *repoStub) IsAdmin(_ context.Context, id int64) (bool, error) {
 }
 func (r *repoStub) ListAdmins(context.Context) ([]storage.Admin, error)  { return nil, nil }
 func (r *repoStub) UpsertService(context.Context, storage.Service) error { return nil }
+func (r *repoStub) ListServices(context.Context) ([]storage.Service, error) {
+	return r.services, nil
+}
 func (r *repoStub) Service(_ context.Context, name string) (storage.Service, bool, error) {
 	for _, service := range r.services {
 		if service.Name == name {
@@ -54,6 +57,13 @@ func (r *repoStub) GetSetting(_ context.Context, key string) (storage.Setting, b
 	setting, ok := r.settings[key]
 	return setting, ok, nil
 }
+func (r *repoStub) ListSettings(context.Context, bool) ([]storage.Setting, error) {
+	values := make([]storage.Setting, 0, len(r.settings))
+	for _, setting := range r.settings {
+		values = append(values, setting)
+	}
+	return values, nil
+}
 func (r *repoStub) SaveClient(context.Context, storage.Client) error { return nil }
 func (r *repoStub) ListClients(context.Context, string) ([]storage.Client, error) {
 	return nil, nil
@@ -64,6 +74,9 @@ func (r *repoStub) SaveWireGuardServer(context.Context, storage.WireGuardServer)
 }
 func (r *repoStub) GetWireGuardServer(context.Context, string) (storage.WireGuardServer, bool, error) {
 	return storage.WireGuardServer{}, false, nil
+}
+func (r *repoStub) ListWireGuardServers(context.Context) ([]storage.WireGuardServer, error) {
+	return nil, nil
 }
 func (r *repoStub) SetPendingOperation(_ context.Context, op storage.PendingOperation) error {
 	r.pending = &op
