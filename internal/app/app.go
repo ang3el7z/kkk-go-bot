@@ -16,6 +16,7 @@ import (
 	"github.com/ang3el7z/kkk-go-bot/internal/adguard"
 	"github.com/ang3el7z/kkk-go-bot/internal/config"
 	"github.com/ang3el7z/kkk-go-bot/internal/legacy"
+	"github.com/ang3el7z/kkk-go-bot/internal/moderation"
 	"github.com/ang3el7z/kkk-go-bot/internal/services"
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
@@ -59,7 +60,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 	}
 
 	xrayManager := xray.NewManager(cfg, repo)
-	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xrayManager, adguard.NewManager(cfg, repo))
+	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xrayManager, adguard.NewManager(cfg, repo), moderation.NewManager(cfg, repo))
 	go runXrayStatsLoop(ctx, xrayManager)
 	client := telegram.NewAPIClient(cfg.TelegramToken)
 	mux := http.NewServeMux()

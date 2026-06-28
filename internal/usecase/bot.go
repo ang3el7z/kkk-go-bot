@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/ang3el7z/kkk-go-bot/internal/adguard"
+	"github.com/ang3el7z/kkk-go-bot/internal/moderation"
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
 	"github.com/ang3el7z/kkk-go-bot/internal/wireguard"
@@ -19,12 +20,18 @@ type Bot struct {
 	wg   *wireguard.Manager
 	xray *xray.Manager
 	ad   *adguard.Manager
+	mod  *moderation.Manager
 }
 
-func NewBot(repo storage.Repository, wg *wireguard.Manager, xr *xray.Manager, ads ...*adguard.Manager) *Bot {
+func NewBot(repo storage.Repository, wg *wireguard.Manager, xr *xray.Manager, extras ...any) *Bot {
 	bot := &Bot{repo: repo, wg: wg, xray: xr}
-	if len(ads) > 0 {
-		bot.ad = ads[0]
+	for _, extra := range extras {
+		switch typed := extra.(type) {
+		case *adguard.Manager:
+			bot.ad = typed
+		case *moderation.Manager:
+			bot.mod = typed
+		}
 	}
 	return bot
 }
@@ -65,6 +72,8 @@ func (b *Bot) HandleMessage(ctx context.Context, msg telegram.Message) (MessageR
 			return MessageResult{Text: err.Error()}, nil
 		}
 		return b.xrayMenu(ctx)
+	case "/logs", "/deny", "/ip":
+		return b.moderationMenu(ctx)
 	default:
 		return MessageResult{Text: "Unknown command. Use /menu."}, nil
 	}
@@ -81,6 +90,9 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 		return result, err
 	}
 	if result, ok, err := b.handleAdGuardCallback(ctx, query.From.ID, query.Data); ok || err != nil {
+		return result, err
+	}
+	if result, ok, err := b.handleModerationCallback(ctx, query.From.ID, query.Data); ok || err != nil {
 		return result, err
 	}
 	name, ok := strings.CutPrefix(query.Data, "service:")
@@ -336,6 +348,12 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 			result, err := b.adguardMenu(ctx)
 			return result, true, err
 		}
+	case "moderation_deny_add":
+		err = b.mod.AddDeny(ctx, msg.Text)
+		if err == nil {
+			result, err := b.moderationMenu(ctx)
+			return result, true, err
+		}
 	default:
 		return MessageResult{Text: "Unknown pending operation"}, true, nil
 	}
@@ -521,6 +539,60 @@ func (b *Bot) handleAdGuardCallback(ctx context.Context, telegramID int64, data 
 	}
 }
 
+func (b *Bot) handleModerationCallback(ctx context.Context, telegramID int64, data string) (CallbackResult, bool, error) {
+	if b.mod == nil || !strings.HasPrefix(data, "mod:") {
+		return CallbackResult{}, false, nil
+	}
+	parts := strings.SplitN(data, ":", 3)
+	if len(parts) < 2 {
+		return CallbackResult{Text: "Bad moderation action", ShowAlert: true}, true, nil
+	}
+	action := parts[1]
+	value := ""
+	if len(parts) == 3 {
+		value = parts[2]
+	}
+	switch action {
+	case "menu":
+		msg, err := b.moderationMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "denyadd":
+		if err := b.setPendingOperation(ctx, telegramID, "moderation_deny_add", "deny"); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send IP/CIDR to deny, e.g. 203.0.113.10 or 203.0.113.0/24", ShowAlert: true}, true, nil
+	case "denydelete":
+		if err := b.mod.DeleteDeny(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.moderationMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "denyclear":
+		if err := b.mod.ClearDeny(ctx); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.moderationMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "logclear":
+		if err := b.mod.ClearLogs(); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.moderationMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "logtail":
+		body, err := b.mod.TailLog(value, 3500)
+		if err != nil {
+			return CallbackResult{}, true, err
+		}
+		if strings.TrimSpace(body) == "" {
+			body = "empty log"
+		}
+		return CallbackResult{Text: body, ShowAlert: true}, true, nil
+	default:
+		return CallbackResult{Text: "Unknown moderation action", ShowAlert: true}, true, nil
+	}
+}
+
 func (b *Bot) setPending(ctx context.Context, telegramID int64, action, clientID string) error {
 	return b.setPendingOperation(ctx, telegramID, "wg_"+action, clientID)
 }
@@ -677,6 +749,35 @@ func (b *Bot) adguardMenu(ctx context.Context) (MessageResult, error) {
 		lines = append(lines, "upstreams="+strings.Join(info.Upstreams, ","))
 	} else {
 		lines = append(lines, "upstreams=none")
+	}
+	return MessageResult{Text: strings.Join(lines, "\n"), Keyboard: keyboard.Build()}, nil
+}
+
+func (b *Bot) moderationMenu(ctx context.Context) (MessageResult, error) {
+	if b.mod == nil {
+		return MessageResult{Text: "Moderation adapter unavailable"}, nil
+	}
+	info, err := b.mod.Info()
+	if err != nil {
+		return MessageResult{}, err
+	}
+	keyboard := NewMenuBuilder(1)
+	keyboard.Add("Add deny IP/CIDR", "mod:denyadd:")
+	if len(info.Deny) > 0 {
+		keyboard.Add("Clear deny list", "mod:denyclear:")
+	}
+	for _, value := range info.Deny {
+		keyboard.Add("allow "+value, "mod:denydelete:"+value)
+	}
+	if len(info.Logs) > 0 {
+		keyboard.Add("Clear logs", "mod:logclear:")
+	}
+	for _, logFile := range info.Logs {
+		keyboard.Add("tail "+logFile.Name, "mod:logtail:"+logFile.Name)
+	}
+	lines := []string{"Moderation", fmt.Sprintf("deny=%d", len(info.Deny)), fmt.Sprintf("logs=%d", len(info.Logs))}
+	for _, logFile := range info.Logs {
+		lines = append(lines, fmt.Sprintf("log %s %dB", logFile.Name, logFile.Size))
 	}
 	return MessageResult{Text: strings.Join(lines, "\n"), Keyboard: keyboard.Build()}, nil
 }

@@ -22,12 +22,13 @@
 - PAC/subscription parity slice: `/pac?s=<uuid>&t=s|si|cl`, `/pac/sub?id=<uuid>`, and legacy `/pacHASH/<base64-php-params>` URLs return DB-backed Xray subscriptions; origin/DB templates, route placeholders, app import redirects, and Windows sing-box ZIP are implemented.
 - Smaller service adapters: MTProto, Shadowsocks, SS local proxy, OpenConnect, NaiveProxy, Hysteria, DNSTT, and Warp menu adapters summarize imported DB state without leaking secret values.
 - AdGuard use cases: YAML-backed status menu plus upstream DNS add/delete flows with DB legacy setting sync.
+- Logs/IP moderation/HWID: Xray HWID controls plus moderation menu for deny IP/CIDR add/remove/clear and log list/tail/clear.
 
 ## Remaining For Full Parity
 
 - PAC/routing list editors and remote list updates.
 - Service-specific handlers: remaining mutation flows for smaller services.
-- Logs/IP moderation/updater/backup/import-export.
+- Updater/backup/import-export.
 - DB-owned renderers for config files and reload commands.
 
 ## GitHub Issue Mapping
@@ -46,4 +47,5 @@
 - GO-012 PAC/subscription parity implemented in Go. Runtime validation on Linux host still required.
 - GO-013 Smaller service adapters implemented.
 - GO-014 AdGuard use cases implemented.
-- GO-015..GO-018 remain implementation work for parity/cutover.
+- GO-015 Logs, IP deny, and HWID limits implemented.
+- GO-016..GO-018 remain implementation work for parity/cutover.

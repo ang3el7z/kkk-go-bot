@@ -18,6 +18,7 @@ type Config struct {
 	ComposePath   string
 	ConfigDir     string
 	CertsDir      string
+	LogsDir       string
 	LegacyPHPPath string
 	PublicIP      string
 	ProjectName   string
@@ -45,6 +46,7 @@ func Load(envFile string) (Config, error) {
 		ComposePath:   getenv("COMPOSE_PATH", "docker-compose.yml"),
 		ConfigDir:     getenv("CONFIG_DIR", "config"),
 		CertsDir:      getenv("CERTS_DIR", "certs"),
+		LogsDir:       getenv("LOGS_DIR", "logs"),
 		LegacyPHPPath: getenv("LEGACY_PHP_CONFIG", filepath.Join("app", "config.php")),
 		PublicIP:      getenv("PUBLIC_IP", getenv("IP", firstNonLoopbackIP())),
 		ProjectName:   getenv("PROJECT_NAME", "kkk-go-bot"),
