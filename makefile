@@ -16,6 +16,12 @@ go-logs: # логи Go runtime
 	COMPOSE_PROFILES=go-bot docker compose logs -f bot
 go-shell: # shell Go контейнера
 	COMPOSE_PROFILES=go-bot docker compose exec bot /bin/sh
+go-cutover: # переключение webhook runtime на Go: поднять bot, PHP оставить для rollback
+	make go
+	COMPOSE_PROFILES=go-bot docker compose ps bot
+go-rollback: # rollback runtime на PHP: остановить Go bot, PHP контейнеры не трогать
+	COMPOSE_PROFILES=go-bot docker compose stop bot
+	docker compose ps php service
 d: # остановка контейнеров
 	-kill -9 $(shell cat ./update/update_pid) > /dev/null
 	docker compose down --remove-orphans

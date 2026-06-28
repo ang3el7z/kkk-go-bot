@@ -18,6 +18,7 @@
 - Compose profile `go-bot`.
 - Go runtime contract: `bot` compose profile with SQLite data volume, writable config volume for renderers, read-only Docker socket for probes/exec, legacy PHP config import mount, sing-box Windows assets mount, and HTTP healthcheck.
 - Selectable Go runtime: PHP remains default; `make go`, `make go-down`, `make go-logs`, and `make go-shell` manage the optional `go-bot` profile.
+- Final cutover/rollback: `make go-cutover`, `make go-rollback`, and `docs/go-cutover-runbook.md`.
 - WireGuard parity slice: DB-backed clients/server config, key generation, add/delete/toggle, reply flows for rename/timer/DNS/MTU/AllowedIPs/default AllowedIPs, Telegram config document upload, QR image upload, Amnezia toggle/key material, endpoint switch, torrent/exchange flags synced to `pac.json`, subnet list UI, live traffic/handshake display via Docker exec, richer menu status, `wg0.conf`/`wg1.conf` rendering, optional reload via `WG_RELOAD=1`.
 - Xray parity slice: import users from `xray.json`, DB-backed add/delete/toggle/rename/timer/reset UUID, stats display from `xray.stats`, full stats ingestion loop through Docker exec, VLESS link + QR, reset-stats marker, transport switching, global/per-user HWID controls, route lists, subscription templates, render active users back to `config/xray.json`, Telegram menu callbacks.
 - PAC/subscription parity slice: `/pac?s=<uuid>&t=s|si|cl`, `/pac/sub?id=<uuid>`, and legacy `/pacHASH/<base64-php-params>` URLs return DB-backed Xray subscriptions; origin/DB templates, route placeholders, app import redirects, and Windows sing-box ZIP are implemented.
@@ -52,4 +53,4 @@
 - GO-015 Logs, IP deny, and HWID limits implemented.
 - GO-016 Backup/export/import v2 implemented.
 - GO-017 Docker compatibility and selectable Go runtime implemented.
-- GO-018 remains implementation work for parity/cutover.
+- GO-018 Final Go cutover with rollback implemented.

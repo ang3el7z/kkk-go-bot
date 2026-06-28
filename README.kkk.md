@@ -38,6 +38,15 @@ make go-down
 
 Go listens on `127.0.0.1:8082` and uses compose profile `go-bot`. Rollback is `make go-down`; PHP containers stay unchanged.
 
+Final cutover/rollback runbook:
+
+```sh
+make go-cutover
+make go-rollback
+```
+
+See `docs/go-cutover-runbook.md`.
+
 ## Autostart
 
 ```sh
