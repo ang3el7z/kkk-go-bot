@@ -9,7 +9,7 @@ u: # запуск контейнеров
 	IP=$(IP) VER=$(shell git describe --tags) docker compose --env-file ./.env --env-file ./override.env up -d --force-recreate
 go: # запуск Go runtime рядом с PHP через compose profile go-bot
 	make init
-	COMPOSE_PROFILES=go-bot IP=$${IP:-$$(hostname -I | awk '{print $$1}')} VER=$${VER:-$$(git describe --tags 2>/dev/null || echo dev)} docker compose --env-file ./.env --env-file ./override.env up -d --force-recreate bot
+	COMPOSE_PROFILES=go-bot IP=$${IP:-$$(hostname -I | awk '{print $$1}')} VER=$${VER:-$$(git describe --tags 2>/dev/null || echo dev)} docker compose --env-file ./.env --env-file ./override.env up -d --build --force-recreate bot
 go-down: # остановка только Go runtime
 	COMPOSE_PROFILES=go-bot docker compose stop bot
 go-logs: # логи Go runtime
