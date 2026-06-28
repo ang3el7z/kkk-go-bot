@@ -41,6 +41,10 @@ type RuntimeReader interface {
 	RunningServices(ctx context.Context) (map[string]bool, error)
 }
 
+type RuntimeController interface {
+	SetServiceRunning(ctx context.Context, name string, running bool) error
+}
+
 type Registry struct {
 	repo    storage.Repository
 	compose ComposeReader
@@ -65,16 +69,25 @@ func (r *Registry) Refresh(ctx context.Context) error {
 		}
 	}
 	for _, def := range Definitions {
+		userDisabled, err := r.userDisabled(ctx, def.Name)
+		if err != nil {
+			return err
+		}
 		service := storage.Service{
 			Name:        def.Name,
 			DisplayName: def.DisplayName,
-			Enabled:     enabled[def.Name],
-			Available:   enabled[def.Name],
+			Enabled:     enabled[def.Name] && !userDisabled,
+			Available:   enabled[def.Name] && !userDisabled,
 			MenuGroup:   def.MenuGroup,
 			SortOrder:   def.SortOrder,
 			UpdatedAt:   time.Now().UTC(),
 		}
-		if !service.Enabled {
+		if userDisabled {
+			service.AvailabilityReason = "disabled in bot settings"
+			if controller, ok := r.runtime.(RuntimeController); ok {
+				_ = controller.SetServiceRunning(ctx, def.Name, false)
+			}
+		} else if !service.Enabled {
 			service.AvailabilityReason = "service disabled in compose"
 		} else if runtimeAvailable {
 			service.Available = running[def.Name]
@@ -87,4 +100,12 @@ func (r *Registry) Refresh(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (r *Registry) userDisabled(ctx context.Context, name string) (bool, error) {
+	setting, ok, err := r.repo.GetSetting(ctx, "service.disabled."+name)
+	if err != nil || !ok {
+		return false, err
+	}
+	return setting.ValueJSON == "true", nil
 }

@@ -9,6 +9,7 @@ import (
 
 type memoryRepo struct {
 	services map[string]storage.Service
+	settings map[string]storage.Setting
 }
 
 func (m *memoryRepo) Migrate(context.Context) error { return nil }
@@ -37,9 +38,16 @@ func (m *memoryRepo) Service(_ context.Context, name string) (storage.Service, b
 	return service, ok, nil
 }
 func (m *memoryRepo) MenuServices(context.Context) ([]storage.Service, error) { return nil, nil }
-func (m *memoryRepo) SetSetting(context.Context, storage.Setting) error       { return nil }
-func (m *memoryRepo) GetSetting(context.Context, string) (storage.Setting, bool, error) {
-	return storage.Setting{}, false, nil
+func (m *memoryRepo) SetSetting(_ context.Context, setting storage.Setting) error {
+	if m.settings == nil {
+		m.settings = map[string]storage.Setting{}
+	}
+	m.settings[setting.Key] = setting
+	return nil
+}
+func (m *memoryRepo) GetSetting(_ context.Context, key string) (storage.Setting, bool, error) {
+	setting, ok := m.settings[key]
+	return setting, ok, nil
 }
 func (m *memoryRepo) ListSettings(context.Context, bool) ([]storage.Setting, error) {
 	return nil, nil
@@ -87,5 +95,22 @@ func TestRegistryHidesStoppedService(t *testing.T) {
 	xr := repo.services["xr"]
 	if !xr.Enabled || xr.Available {
 		t.Fatalf("xr should be enabled but unavailable: %+v", xr)
+	}
+}
+
+func TestRegistryRespectsUserDisabledService(t *testing.T) {
+	repo := &memoryRepo{
+		services: map[string]storage.Service{},
+		settings: map[string]storage.Setting{
+			"service.disabled.wg": {Key: "service.disabled.wg", ValueJSON: "true"},
+		},
+	}
+	registry := NewRegistry(repo, fakeCompose{"wg": true}, fakeRuntime{"wg": true})
+	if err := registry.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	wg := repo.services["wg"]
+	if wg.Enabled || wg.Available || wg.AvailabilityReason != "disabled in bot settings" {
+		t.Fatalf("wg should be user-disabled: %+v", wg)
 	}
 }

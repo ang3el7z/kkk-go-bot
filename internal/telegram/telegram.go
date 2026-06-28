@@ -47,9 +47,10 @@ type InlineKeyboard struct {
 }
 
 type InlineButton struct {
-	Text string
-	Data string
-	URL  string
+	Text   string
+	Data   string
+	URL    string
+	WebApp string
 }
 
 type Document struct {
@@ -234,14 +235,16 @@ func decodeAPIResponse(method string, body io.Reader) error {
 	return nil
 }
 
-func keyboardRows(keyboard *InlineKeyboard) [][]map[string]string {
-	rows := make([][]map[string]string, 0, len(keyboard.Rows))
+func keyboardRows(keyboard *InlineKeyboard) [][]map[string]any {
+	rows := make([][]map[string]any, 0, len(keyboard.Rows))
 	for _, row := range keyboard.Rows {
-		out := make([]map[string]string, 0, len(row))
+		out := make([]map[string]any, 0, len(row))
 		for _, button := range row {
-			item := map[string]string{"text": button.Text}
+			item := map[string]any{"text": button.Text}
 			if button.URL != "" {
 				item["url"] = button.URL
+			} else if button.WebApp != "" {
+				item["web_app"] = map[string]string{"url": button.WebApp}
 			} else {
 				item["callback_data"] = button.Data
 			}

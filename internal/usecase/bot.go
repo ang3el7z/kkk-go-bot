@@ -17,11 +17,12 @@ import (
 )
 
 type Bot struct {
-	repo storage.Repository
-	wg   *wireguard.Manager
-	xray *xray.Manager
-	ad   *adguard.Manager
-	mod  *moderation.Manager
+	repo           storage.Repository
+	wg             *wireguard.Manager
+	xray           *xray.Manager
+	ad             *adguard.Manager
+	mod            *moderation.Manager
+	serviceControl ServiceController
 }
 
 func NewBot(repo storage.Repository, wg *wireguard.Manager, xr *xray.Manager, extras ...any) *Bot {
@@ -32,6 +33,8 @@ func NewBot(repo storage.Repository, wg *wireguard.Manager, xr *xray.Manager, ex
 			bot.ad = typed
 		case *moderation.Manager:
 			bot.mod = typed
+		case ServiceController:
+			bot.serviceControl = typed
 		}
 	}
 	return bot
@@ -114,6 +117,9 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 		return result, err
 	}
 	if result, ok, err := b.handleBackupCallback(ctx, query.From.ID, query.Data); ok || err != nil {
+		return result, err
+	}
+	if result, ok, err := b.handleServiceManagementCallback(ctx, query.Data); ok || err != nil {
 		return result, err
 	}
 	name, ok := strings.CutPrefix(query.Data, "service:")
@@ -691,8 +697,16 @@ func (b *Bot) menu(ctx context.Context) (MessageResult, error) {
 	for _, service := range services {
 		available[service.Name] = true
 	}
-	keyboard := upstreamLikeMainKeyboard(available)
-	return MessageResult{Text: "Menu", Keyboard: keyboard}, nil
+	allServices, err := b.repo.ListServices(ctx)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	if len(allServices) == 0 {
+		allServices = services
+	}
+	pac := b.legacyPAC(ctx)
+	keyboard := upstreamLikeMainKeyboard(available, pac)
+	return MessageResult{Text: b.mainMenuText(ctx, allServices), Keyboard: keyboard}, nil
 }
 
 func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error) {
@@ -832,11 +846,12 @@ func (b *Bot) moderationMenu(ctx context.Context) (MessageResult, error) {
 func (b *Bot) settingsMenu(ctx context.Context) (MessageResult, error) {
 	keyboard := NewMenuBuilder(2)
 	keyboard.Add("Logs / IP deny", "mod:menu")
+	keyboard.Add("Containers", "svc:menu")
 	keyboard.Add("Export backup", "backup:export")
 	keyboard.Add("Import backup", "backup:import")
 	keyboard.Add("Back", "service:menu")
 	return MessageResult{
-		Text:     "Settings\nLogs, IP deny list, backup export/import.",
+		Text:     "Settings\nLogs, IP deny list, containers, backup export/import.",
 		Keyboard: keyboard.Build(),
 	}, nil
 }
@@ -870,54 +885,6 @@ func promptForWGAction(action string) string {
 	default:
 		return "Send value"
 	}
-}
-
-func upstreamLikeMainKeyboard(available map[string]bool) *telegram.InlineKeyboard {
-	rows := [][]telegram.InlineButton{}
-	addRow := func(buttons ...telegram.InlineButton) {
-		row := make([]telegram.InlineButton, 0, len(buttons))
-		for _, button := range buttons {
-			if button.Text != "" {
-				row = append(row, button)
-			}
-		}
-		if len(row) > 0 {
-			rows = append(rows, row)
-		}
-	}
-	serviceButton := func(service, text, data string) telegram.InlineButton {
-		if !available[service] {
-			return telegram.InlineButton{}
-		}
-		return telegram.InlineButton{Text: text, Data: data}
-	}
-	addRow(
-		serviceButton("wg", "Wireguard", "service:wg"),
-		serviceButton("wg1", "Wireguard", "service:wg1"),
-	)
-	addRow(
-		serviceButton("xr", "Vless", "service:xr"),
-		serviceButton("np", "NaiveProxy", "service:np"),
-	)
-	addRow(
-		serviceButton("oc", "OpenConnect", "service:oc"),
-		serviceButton("tg", "MTProto", "service:tg"),
-	)
-	addRow(
-		serviceButton("ad", "AdGuard", "service:ad"),
-		serviceButton("wp", "Warp", "service:wp"),
-	)
-	addRow(
-		serviceButton("ss", "Shadowsocks", "service:ss"),
-		serviceButton("xr", "PAC", "service:pac"),
-	)
-	addRow(
-		serviceButton("hy", "Hysteria", "service:hy"),
-		serviceButton("dnstt", "DNSTT", "service:dnstt"),
-	)
-	addRow(telegram.InlineButton{Text: "Settings", Data: "service:config"})
-	addRow(telegram.InlineButton{Text: "chat", URL: "https://t.me/+4G3-Q4d_vFExODcy"})
-	return &telegram.InlineKeyboard{Rows: rows}
 }
 
 func (b *Bot) xrayMenu(ctx context.Context) (MessageResult, error) {

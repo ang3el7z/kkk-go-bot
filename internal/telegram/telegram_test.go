@@ -28,6 +28,7 @@ func TestSendMessagePayloadAndKeyboard(t *testing.T) {
 	err := client.SendMessage(42, "hello", &InlineKeyboard{Rows: [][]InlineButton{{
 		{Text: "A", Data: "a:1"},
 		{Text: "Docs", URL: "https://example.com"},
+		{Text: "App", WebApp: "https://example.com/app"},
 	}}})
 	if err != nil {
 		t.Fatal(err)
@@ -42,6 +43,11 @@ func TestSendMessagePayloadAndKeyboard(t *testing.T) {
 	rows, _ := markup["inline_keyboard"].([]any)
 	if len(rows) != 1 {
 		t.Fatalf("bad keyboard: %+v", markup)
+	}
+	firstRow, _ := rows[0].([]any)
+	webAppButton, _ := firstRow[2].(map[string]any)
+	if _, ok := webAppButton["web_app"].(map[string]any); !ok {
+		t.Fatalf("missing web_app button: %+v", webAppButton)
 	}
 }
 

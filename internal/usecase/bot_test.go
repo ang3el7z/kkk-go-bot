@@ -32,8 +32,17 @@ func (r *repoStub) HasAdmins(context.Context) (bool, error) { return len(r.admin
 func (r *repoStub) IsAdmin(_ context.Context, id int64) (bool, error) {
 	return r.admins[id], nil
 }
-func (r *repoStub) ListAdmins(context.Context) ([]storage.Admin, error)  { return nil, nil }
-func (r *repoStub) UpsertService(context.Context, storage.Service) error { return nil }
+func (r *repoStub) ListAdmins(context.Context) ([]storage.Admin, error) { return nil, nil }
+func (r *repoStub) UpsertService(_ context.Context, service storage.Service) error {
+	for idx := range r.services {
+		if r.services[idx].Name == service.Name {
+			r.services[idx] = service
+			return nil
+		}
+	}
+	r.services = append(r.services, service)
+	return nil
+}
 func (r *repoStub) ListServices(context.Context) ([]storage.Service, error) {
 	return r.services, nil
 }
@@ -45,7 +54,15 @@ func (r *repoStub) Service(_ context.Context, name string) (storage.Service, boo
 	}
 	return storage.Service{}, false, nil
 }
-func (r *repoStub) MenuServices(context.Context) ([]storage.Service, error) { return r.services, nil }
+func (r *repoStub) MenuServices(context.Context) ([]storage.Service, error) {
+	services := make([]storage.Service, 0, len(r.services))
+	for _, service := range r.services {
+		if service.Enabled && service.Available && service.MenuGroup == "main" {
+			services = append(services, service)
+		}
+	}
+	return services, nil
+}
 func (r *repoStub) SetSetting(_ context.Context, setting storage.Setting) error {
 	if r.settings == nil {
 		r.settings = map[string]storage.Setting{}
@@ -97,8 +114,8 @@ func TestMenuOnlyUsesRepositoryServices(t *testing.T) {
 	repo := &repoStub{
 		admins: map[int64]bool{1: true},
 		services: []storage.Service{
-			{Name: "wg", DisplayName: "WireGuard 0"},
-			{Name: "xr", DisplayName: "Xray"},
+			{Name: "wg", DisplayName: "WireGuard 0", Enabled: true, Available: true, MenuGroup: "main"},
+			{Name: "xr", DisplayName: "Xray", Enabled: true, Available: true, MenuGroup: "main"},
 		},
 	}
 	result, err := NewBot(repo, wireguard.NewManager(config.Config{}, repo), xray.NewManager(config.Config{}, repo)).HandleMessage(context.Background(), telegram.Message{
@@ -114,6 +131,72 @@ func TestMenuOnlyUsesRepositoryServices(t *testing.T) {
 	}
 	if result.Keyboard.Rows[0][0].Data != "service:wg" || result.Keyboard.Rows[1][0].Data != "service:xr" {
 		t.Fatalf("unexpected go-native callbacks: %+v", result.Keyboard)
+	}
+	if !strings.Contains(result.Text, "Vless") || !strings.Contains(result.Text, "autobackup") {
+		t.Fatalf("missing upstream-like dashboard text: %q", result.Text)
+	}
+}
+
+type serviceControlStub struct {
+	calls []string
+}
+
+func (s *serviceControlStub) SetServiceRunning(_ context.Context, name string, running bool) error {
+	s.calls = append(s.calls, name)
+	if running {
+		s.calls[len(s.calls)-1] += ":start"
+	} else {
+		s.calls[len(s.calls)-1] += ":stop"
+	}
+	return nil
+}
+
+func TestSettingsExposeContainerManagement(t *testing.T) {
+	repo := &repoStub{
+		admins: map[int64]bool{1: true},
+		services: []storage.Service{
+			{Name: "wg", DisplayName: "WireGuard 0", Enabled: true, Available: true, MenuGroup: "main"},
+		},
+	}
+	bot := NewBot(repo, wireguard.NewManager(config.Config{}, repo), xray.NewManager(config.Config{}, repo), &serviceControlStub{})
+	result, err := bot.HandleCallback(context.Background(), telegram.CallbackQuery{From: telegram.User{ID: 1}, Data: "service:config"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Keyboard == nil || result.Keyboard.Rows[0][1].Data != "svc:menu" {
+		t.Fatalf("missing container management button: %+v", result.Keyboard)
+	}
+}
+
+func TestContainerManagementStopsAndHidesService(t *testing.T) {
+	control := &serviceControlStub{}
+	repo := &repoStub{
+		admins: map[int64]bool{1: true},
+		services: []storage.Service{
+			{Name: "wg", DisplayName: "WireGuard 0", Enabled: true, Available: true, MenuGroup: "main"},
+		},
+	}
+	bot := NewBot(repo, wireguard.NewManager(config.Config{}, repo), xray.NewManager(config.Config{}, repo), control)
+	result, err := bot.HandleCallback(context.Background(), telegram.CallbackQuery{From: telegram.User{ID: 1}, Data: "svc:toggle:wg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(control.calls) != 1 || control.calls[0] != "wg:stop" {
+		t.Fatalf("bad service control calls: %+v", control.calls)
+	}
+	if !strings.Contains(result.Text, "disabled in bot settings") {
+		t.Fatalf("missing stopped status: %q", result.Text)
+	}
+	setting, ok, err := repo.GetSetting(context.Background(), "service.disabled.wg")
+	if err != nil || !ok || setting.ValueJSON != "true" {
+		t.Fatalf("disabled setting not persisted: ok=%v err=%v setting=%+v", ok, err, setting)
+	}
+	menu, err := bot.HandleMessage(context.Background(), telegram.Message{From: telegram.User{ID: 1}, Chat: telegram.Chat{ID: 10}, Text: "/menu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if menu.Keyboard != nil && len(menu.Keyboard.Rows) > 0 && menu.Keyboard.Rows[0][0].Data == "service:wg" {
+		t.Fatalf("stopped service still visible: %+v", menu.Keyboard)
 	}
 }
 

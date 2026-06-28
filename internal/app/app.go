@@ -44,7 +44,8 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 	if err := legacy.NewImporter(cfg, repo).Import(ctx); err != nil {
 		return err
 	}
-	registry := services.NewRegistry(repo, services.ComposeFile{Path: cfg.ComposePath}, services.DockerRuntime{})
+	dockerRuntime := services.DockerRuntime{ProjectName: cfg.ProjectName}
+	registry := services.NewRegistry(repo, services.ComposeFile{Path: cfg.ComposePath}, dockerRuntime)
 	if err := registry.Refresh(ctx); err != nil {
 		return err
 	}
@@ -61,7 +62,7 @@ func Run(ctx context.Context, cfg config.Config, opts Options) error {
 	}
 
 	xrayManager := xray.NewManager(cfg, repo)
-	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xrayManager, adguard.NewManager(cfg, repo), moderation.NewManager(cfg, repo))
+	bot := usecase.NewBot(repo, wireguard.NewManager(cfg, repo), xrayManager, adguard.NewManager(cfg, repo), moderation.NewManager(cfg, repo), dockerRuntime)
 	go runXrayStatsLoop(ctx, xrayManager)
 	client := telegram.NewAPIClient(cfg.TelegramToken)
 	if cfg.TelegramPolling {
