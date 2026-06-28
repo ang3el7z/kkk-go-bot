@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ang3el7z/kkk-go-bot/internal/adguard"
 	"github.com/ang3el7z/kkk-go-bot/internal/storage"
 	"github.com/ang3el7z/kkk-go-bot/internal/telegram"
 	"github.com/ang3el7z/kkk-go-bot/internal/wireguard"
@@ -17,10 +18,15 @@ type Bot struct {
 	repo storage.Repository
 	wg   *wireguard.Manager
 	xray *xray.Manager
+	ad   *adguard.Manager
 }
 
-func NewBot(repo storage.Repository, wg *wireguard.Manager, xr *xray.Manager) *Bot {
-	return &Bot{repo: repo, wg: wg, xray: xr}
+func NewBot(repo storage.Repository, wg *wireguard.Manager, xr *xray.Manager, ads ...*adguard.Manager) *Bot {
+	bot := &Bot{repo: repo, wg: wg, xray: xr}
+	if len(ads) > 0 {
+		bot.ad = ads[0]
+	}
+	return bot
 }
 
 type MessageResult struct {
@@ -74,6 +80,9 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 	if result, ok, err := b.handleXrayCallback(ctx, query.From.ID, query.Data); ok || err != nil {
 		return result, err
 	}
+	if result, ok, err := b.handleAdGuardCallback(ctx, query.From.ID, query.Data); ok || err != nil {
+		return result, err
+	}
 	name, ok := strings.CutPrefix(query.Data, "service:")
 	if !ok {
 		if query.Data == "/menu wg" || strings.HasPrefix(query.Data, "/menu wg ") || query.Data == "/changeWG 0" {
@@ -120,6 +129,10 @@ func (b *Bot) HandleCallback(ctx context.Context, query telegram.CallbackQuery) 
 	}
 	if result, ok, err := b.smallServiceMenu(ctx, name); ok || err != nil {
 		return result, err
+	}
+	if name == "ad" {
+		msg, err := b.adguardMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, err
 	}
 	return CallbackResult{Text: service.DisplayName, ShowAlert: false}, nil
 }
@@ -317,6 +330,12 @@ func (b *Bot) handlePendingMessage(ctx context.Context, msg telegram.Message) (M
 			result, err := b.xrayMenu(ctx)
 			return result, true, err
 		}
+	case "adguard_upstream_add":
+		err = b.ad.AddUpstream(ctx, msg.Text)
+		if err == nil {
+			result, err := b.adguardMenu(ctx)
+			return result, true, err
+		}
 	default:
 		return MessageResult{Text: "Unknown pending operation"}, true, nil
 	}
@@ -466,6 +485,42 @@ func (b *Bot) handleXrayCallback(ctx context.Context, telegramID int64, data str
 	}
 }
 
+func (b *Bot) handleAdGuardCallback(ctx context.Context, telegramID int64, data string) (CallbackResult, bool, error) {
+	if b.ad == nil || !strings.HasPrefix(data, "ad:") {
+		return CallbackResult{}, false, nil
+	}
+	if err := b.requireServiceAvailable(ctx, "ad"); err != nil {
+		return CallbackResult{Text: err.Error(), ShowAlert: true}, true, nil
+	}
+	parts := strings.SplitN(data, ":", 3)
+	if len(parts) < 2 {
+		return CallbackResult{Text: "Bad AdGuard action", ShowAlert: true}, true, nil
+	}
+	action := parts[1]
+	value := ""
+	if len(parts) == 3 {
+		value = parts[2]
+	}
+	switch action {
+	case "menu":
+		msg, err := b.adguardMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	case "upstreamadd":
+		if err := b.setPendingOperation(ctx, telegramID, "adguard_upstream_add", "ad"); err != nil {
+			return CallbackResult{}, true, err
+		}
+		return CallbackResult{Text: "Send upstream DNS, e.g. https://dns.google/dns-query", ShowAlert: true}, true, nil
+	case "upstreamdel":
+		if err := b.ad.DeleteUpstream(ctx, value); err != nil {
+			return CallbackResult{}, true, err
+		}
+		msg, err := b.adguardMenu(ctx)
+		return CallbackResult{Text: msg.Text, Keyboard: msg.Keyboard}, true, err
+	default:
+		return CallbackResult{Text: "Unknown AdGuard action", ShowAlert: true}, true, nil
+	}
+}
+
 func (b *Bot) setPending(ctx context.Context, telegramID int64, action, clientID string) error {
 	return b.setPendingOperation(ctx, telegramID, "wg_"+action, clientID)
 }
@@ -596,6 +651,34 @@ func (b *Bot) wgMenu(ctx context.Context, instance string) (MessageResult, error
 		text += "\n\n" + strings.Join(lines, "\n")
 	}
 	return MessageResult{Text: text, Keyboard: keyboard}, nil
+}
+
+func (b *Bot) adguardMenu(ctx context.Context) (MessageResult, error) {
+	if b.ad == nil {
+		return MessageResult{Text: "AdGuard adapter unavailable"}, nil
+	}
+	info, err := b.ad.Info(ctx)
+	if err != nil {
+		return MessageResult{}, err
+	}
+	keyboard := NewMenuBuilder(1)
+	keyboard.Add("Add upstream", "ad:upstreamadd:")
+	for _, upstream := range info.Upstreams {
+		keyboard.Add("delete "+upstream, "ad:upstreamdel:"+upstream)
+	}
+	keyboard.Add("Back", "service:menu")
+	lines := []string{
+		"AdGuard",
+		fmt.Sprintf("protection=%t", info.ProtectionEnabled),
+		fmt.Sprintf("bind=%s:%d", info.BindHost, info.BindPort),
+		fmt.Sprintf("users=%d", info.Users),
+	}
+	if len(info.Upstreams) > 0 {
+		lines = append(lines, "upstreams="+strings.Join(info.Upstreams, ","))
+	} else {
+		lines = append(lines, "upstreams=none")
+	}
+	return MessageResult{Text: strings.Join(lines, "\n"), Keyboard: keyboard.Build()}, nil
 }
 
 func promptForWGAction(action string) string {
